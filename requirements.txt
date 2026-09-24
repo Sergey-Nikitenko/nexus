@@ -1,0 +1,11 @@
+# Phase 0 is stdlib-only (dataclasses). These land as later phases ship.
+# Phase 4 (API):       fastapi, uvicorn, pydantic, pydantic-settings
+# Phase 2 (knowledge): chromadb
+# Phase 1/3 (models):  openai, ollama, httpx
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+chromadb
+openai
+httpx

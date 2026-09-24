@@ -39,12 +39,16 @@ def main() -> None:
                         else None)
                 if name in BANNED_CALLS:
                     violations.append(f"{rel}: calls '{name}' (control must not execute)")
+            elif isinstance(node, ast.FunctionDef):
+                if node.name in {"execute_tool", "run_model"}:
+                    violations.append(
+                        f"{rel}: defines '{node.name}' (control must not implement the execution capability)")
 
     if violations:
         for v in violations:
             print("  VIOLATION:", v)
         raise SystemExit(f"{len(violations)} control-plane purity violation(s)")
-    print("PASS: control plane is pure - it decides, never executes or emits.")
+    print("PASS: control plane is pure - decides, never executes or emits, never implements the Executor.")
 
 
 if __name__ == "__main__":

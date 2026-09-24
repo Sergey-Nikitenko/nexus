@@ -47,6 +47,16 @@ Data flow:
 **The router proposes; the policy disposes.** The router never bypasses policy,
 and control-plane components never execute — they only decide.
 
+Side effects flow through one sanctioned interface — the `Executor` capability
+(`execute_tool`, `run_model`). **Decision ≠ Action**: the control plane can
+*request*; only the execution plane can *cause*.
+
+**Phase 1 is frozen** as of this contract:
+
+    User Request → Router → Decision → Policy → DENY / APPROVAL_REQUIRED / ALLOW → Execution
+
+No new abstraction gets added unless a golden/conformance test demands it.
+
 ## The contracts (core/contracts.py)
 
 `Task` → `Run` → `Step`, plus `State`, `Event`, `Decision`, `ToolCall`,
@@ -187,6 +197,7 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 | Core is dependency-light (stdlib only) | `tests/conformance/test_layer_boundaries.py` |
 | Nothing imports upward (control/execution → core only) | `tests/conformance/test_layer_boundaries.py` |
 | Control plane is pure (decides, never executes/emits) | `tests/conformance/test_control_plane_purity.py` |
+| Side effects require the `Executor` capability (Decision ≠ Action) | `tests/conformance/test_control_plane_purity.py` |
 | Router never bypasses policy | `tests/golden/test_phase1_composition.py` |
 | State is recoverable (a projection of events) | `tests/golden/test_phase0_foundation.py` |
 | The boring event envelope (one uniform shape) | enforced by the `Event` dataclass itself |

@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, Protocol
 
 
 def new_id(prefix: str) -> str:
@@ -157,3 +157,16 @@ class Trace:
     """The execution tree. One node per decision/action, linked by parent ids."""
     run_id: str
     nodes: list[dict[str, Any]] = field(default_factory=list)
+
+
+class Executor(Protocol):
+    """The execution capability — the ONLY sanctioned path to a side effect.
+
+    Decision != Action: control-plane components return Decisions (and other
+    contracts); they never implement this. Only the execution plane turns a
+    Decision into an action, and only through this interface.
+    """
+
+    def execute_tool(self, call: ToolCall) -> ToolResult: ...
+
+    def run_model(self, request: ModelRequest) -> ModelResponse: ...

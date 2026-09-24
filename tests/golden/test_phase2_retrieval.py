@@ -53,9 +53,16 @@ def main():
     ret.ingest("filesystem", "docs/auth.md", "v2",
                "the auth middleware verifies and refreshes tokens with a secret.",
                metadata={"team": "platform"})
-    versions = ret.store.versions_of(("filesystem", "docs/auth.md", "chunk 0"))
-    check(set(versions) == {"v1", "v2"},
-          "same identity + different version = same knowledge, updated (stale-detection key)")
+    identity = ("filesystem", "docs/auth.md", "chunk 0")
+    check(ret.store.current(identity) == "v2", "current version is v2")
+    check(set(ret.store.versions_of(identity)) == {"v1", "v2"},
+          "same identity + different version = same knowledge, updated")
+    # update semantics: retrieval surfaces ONLY the current version of a given
+    # identity (stale v1 excluded) — other documents (billing, still v1) are unaffected
+    r3 = ret.search("tokens", k=10)
+    auth_versions = {ch.version for ch in r3.chunks if ch.document == "docs/auth.md"}
+    check("v1" not in auth_versions and "v2" in auth_versions,
+          "retrieval surfaces only the current version of auth (no stale v1 + v2 contradiction)")
 
     print("\nPASS: Phase 2 retrieval holds.")
 

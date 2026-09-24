@@ -127,6 +127,23 @@ reproducible runs.
 | `web` | canonical URL | heading / section | content hash or crawl timestamp |
 | `filesystem` | relative path | page / line range | content hash |
 
+### Phase 2.2 — ingestion as a boundary
+
+Each stage is independently replaceable behind a contract:
+
+    Source → DocumentLoader → Document → Parser → Chunker → Chunk → Embedder → Vector → KnowledgeStore
+
+No stage knows the concrete provider. The reference implementation
+(`knowledge/inmemory.py`) is stdlib-only; a production adapter (Chroma, OpenAI
+embeddings) is just another implementation of the same contracts.
+
+**Update semantics:** a chunk's identity is `(source, document, location)`. The
+store retrieves only the **current** version and never surfaces stale ones — so
+the model never receives v1 and v2 at once without knowing why.
+
+**Phase 2 acceptance:** *Knowledge can be replaced without changing the
+orchestrator.* That is the victory — not "Chroma works."
+
 ### Phase 3 — Execution plane
 The loop, with a REPLAN branch and hard budgets:
 

@@ -1,38 +1,65 @@
-"""Reference (stdlib-only) implementation of the retrieval capability.
+"""Reference (stdlib-only) implementation of every knowledge stage.
 
-This exists to prove the contracts end-to-end, not to be the production engine.
-Bag-of-words embedding + cosine similarity over an in-memory dict — no provider
-libraries, so the conformance gates stay green.
+Exists to prove the contracts, not to be the production engine. A production
+adapter (Chroma, OpenAI embeddings, ...) is just another implementation of the
+same protocols in knowledge/contracts.py.
 """
 from __future__ import annotations
 
+import hashlib
 import math
 import re
 from collections import Counter
 
 from core.contracts import RetrievedChunk, RetrievalResult, new_id
-from .ingestion import Chunk
+from .ingestion import Chunk, Document
 
 _WORD = re.compile(r"[a-z0-9]+")
 
 
-def chunk_text(text: str, size: int = 80, overlap: int = 8) -> list[str]:
-    words = text.split()
-    out: list[str] = []
-    start = 0
-    while start < len(words):
-        out.append(" ".join(words[start:start + size]))
-        start += size - overlap
-    return out
+# ---- reference stage implementations -------------------------------------
+
+class FileSystemLoader:
+    def load(self, path: str) -> Document:
+        text = open(path, encoding="utf-8").read()
+        version = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+        return Document(source="filesystem", document=path, version=version, text=text)
 
 
-def embed(text: str) -> dict[str, float]:
+class IdentityParser:
+    """Reference parser: input is already plain text, so parse is the identity."""
+    def parse(self, doc: Document) -> Document:
+        return doc
+
+
+class WordChunker:
+    def __init__(self, size: int = 80, overlap: int = 8):
+        self.size = size
+        self.overlap = overlap
+
+    def chunk(self, doc: Document) -> list[Chunk]:
+        words = doc.text.split()
+        chunks: list[Chunk] = []
+        start, i = 0, 0
+        while start < len(words):
+            text = " ".join(words[start:start + self.size])
+            chunks.append(Chunk(
+                id=new_id("chunk"), text=text, source=doc.source,
+                document=doc.document, location=f"chunk {i}",
+                version=doc.version, metadata=dict(doc.metadata),
+            ))
+            start += self.size - self.overlap
+            i += 1
+        return chunks
+
+
+def _bow(text: str) -> dict[str, float]:
     counts = Counter(_WORD.findall(text.lower()))
     total = sum(counts.values()) or 1
     return {w: c / total for w, c in counts.items()}
 
 
-def cosine(a: dict[str, float], b: dict[str, float]) -> float:
+def _cosine(a: dict[str, float], b: dict[str, float]) -> float:
     common = a.keys() & b.keys()
     dot = sum(a[w] * b[w] for w in common)
     na = math.sqrt(sum(v * v for v in a.values())) or 1.0
@@ -40,50 +67,78 @@ def cosine(a: dict[str, float], b: dict[str, float]) -> float:
     return dot / (na * nb)
 
 
-class InMemoryVectorStore:
+class BagOfWordsEmbedder:
+    def embed(self, text: str) -> dict[str, float]:
+        return _bow(text)
+
+
+class InMemoryKnowledgeStore:
+    """Stores chunks + embeddings. Retrieval returns only the CURRENT version of
+    each chunk identity — stale versions are retained for audit but never
+    surfaced, so the model never gets v1 and v2 at once without knowing why."""
+
     def __init__(self) -> None:
         self._chunks: dict[str, Chunk] = {}
         self._vectors: dict[str, dict[str, float]] = {}
+        self._by_identity: dict[tuple, dict[str, list[str]]] = {}
+        self._current: dict[tuple, str] = {}
 
-    def add(self, chunk: Chunk) -> None:
+    def add(self, chunk: Chunk, embedding: dict[str, float]) -> None:
+        identity = (chunk.source, chunk.document, chunk.location)
         self._chunks[chunk.id] = chunk
-        self._vectors[chunk.id] = embed(chunk.text)
+        self._vectors[chunk.id] = embedding
+        self._by_identity.setdefault(identity, {}).setdefault(chunk.version, []).append(chunk.id)
+        self._current[identity] = chunk.version  # last-add wins = current
 
-    def search(self, qvec: dict[str, float], k: int, filters: dict | None = None) -> list[tuple[Chunk, float]]:
-        scored: list[tuple[Chunk, float]] = []
+    def search(self, embedding, k, filters=None):
+        scored = []
         for cid, vec in self._vectors.items():
             chunk = self._chunks[cid]
+            identity = (chunk.source, chunk.document, chunk.location)
+            if self._current.get(identity) != chunk.version:
+                continue  # stale chunk — never surfaced
             if filters and not all(chunk.metadata.get(key) == val for key, val in filters.items()):
                 continue
-            scored.append((chunk, cosine(qvec, vec)))
+            scored.append((chunk, _cosine(embedding, vec)))
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored[:k]
 
-    def versions_of(self, identity: tuple[str, str, str]) -> list[str]:
-        return sorted({c.version for c in self._chunks.values()
-                       if (c.source, c.document, c.location) == identity})
+    def versions_of(self, identity):
+        return sorted(self._by_identity.get(identity, {}))
+
+    def current(self, identity):
+        return self._current.get(identity)
 
 
 class InMemoryRetriever:
-    """A Retriever (satisfies the `Retriever` protocol) over the stdlib store."""
+    """Composes the reference stages into a Retriever (satisfies the protocol)."""
 
-    def __init__(self, store: InMemoryVectorStore | None = None) -> None:
-        self.store = store or InMemoryVectorStore()
+    def __init__(self, loader=None, parser=None, chunker=None, embedder=None, store=None):
+        self.loader = loader or FileSystemLoader()
+        self.parser = parser or IdentityParser()
+        self.chunker = chunker or WordChunker()
+        self.embedder = embedder or BagOfWordsEmbedder()
+        self.store = store or InMemoryKnowledgeStore()
 
-    def ingest(self, source: str, document: str, version: str, text: str,
-               metadata: dict | None = None, size: int = 80) -> int:
-        """ingest -> parse -> chunk -> metadata -> embed -> store (composed)."""
+    def ingest_from_document(self, doc: Document) -> int:
+        doc = self.parser.parse(doc)
         n = 0
-        for i, piece in enumerate(chunk_text(text, size=size)):
-            self.store.add(Chunk(
-                id=new_id("chunk"), text=piece, source=source, document=document,
-                location=f"chunk {i}", version=version, metadata=metadata or {},
-            ))
+        for chunk in self.chunker.chunk(doc):
+            self.store.add(chunk, self.embedder.embed(chunk.text))
             n += 1
         return n
 
-    def search(self, query: str, filters: dict | None = None, k: int = 5) -> RetrievalResult:
-        scored = self.store.search(embed(query), k, filters)
+    def ingest(self, source, document, version, text, metadata=None) -> int:
+        return self.ingest_from_document(Document(
+            source=source, document=document, version=version,
+            text=text, metadata=metadata or {},
+        ))
+
+    def ingest_path(self, path: str) -> int:
+        return self.ingest_from_document(self.loader.load(path))
+
+    def search(self, query, filters=None, k=5) -> RetrievalResult:
+        scored = self.store.search(self.embedder.embed(query), k, filters)
         chunks = [
             RetrievedChunk(text=c.text, source=c.source, document=c.document,
                            location=c.location, version=c.version,

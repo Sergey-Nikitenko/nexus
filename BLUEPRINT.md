@@ -298,6 +298,35 @@ behind the same `Executor` protocol.
 semantics FakeExecutor established, without changing Executor, the orchestrator,
 or the control plane.*
 
+### Phase 3.3 — model execution (provider → Nexus, offline)
+
+`ModelRequest -> Executor.run_model() -> ModelResponse`, with one real adapter
+(`SubprocessModelExecutor`, a local process speaking JSON on stdin/stdout) and
+`FakeExecutor` kept permanent as the reference. The model side proves the same
+boundary pattern 3.2 did for tools.
+
+- **`ModelResponse` is Nexus-shaped, not provider-shaped (AD-012).** The adapter
+  translates the provider and drops the rest: `usage.prompt_tokens` becomes
+  `tokens_in`, `completion_tokens` becomes `tokens_out`, and `finish_reason` /
+  `system_fingerprint` / the `usage` dict never reach the caller. `ModelResponse`
+  = content + model identity + usage + execution metadata, plus the
+  `success`/`error` status pair it shares with `ToolResult`.
+- **Failure taxonomy (AD-010's model twin):** a valid response is `success=True`;
+  a provider rejection (error payload, non-zero exit, malformed response) is
+  `ModelResponse(success=False, error=…)`; a launch/config failure (no model,
+  missing executable) raises.
+- **Request identity:** `ModelRequest` carries a `request_id`, so
+  `model.requested` and `model.completed` unambiguously belong to the same
+  run/step — even when one step makes several model calls.
+- **Bounded output:** response content is capped (spec-declared), so a runaway
+  provider response cannot become an enormous event/trace payload.
+- **Deterministic test path:** the golden test drives a local fake model process
+  — no live cloud API is ever required to make `py scripts/check.py` pass.
+
+**Phase 3.3 acceptance:** *A real model adapter satisfies the semantics
+FakeExecutor established, and the caller only ever sees a Nexus-shaped
+ModelResponse — never a provider object.*
+
 ### Phase 4 — Surface
 API (REST + WebSocket), dashboard (run view, trace tree, approval queue, *Why*
 panel), CLI. The dashboard is driven directly off the decision objects.
@@ -353,6 +382,7 @@ Decisions whose wrong interpretation could cause regressions. Not a changelog.
 - **AD-009** — Every externally observable execution step emits an event *before* it is considered complete (`*.requested` first, `*.completed` only on return); a step that never returns is observably incomplete.
 - **AD-010** — Execution failure semantics: an *expected* tool outcome (non-zero exit, timeout) is `ToolResult(success=False, …)`; a *launch* failure (unknown tool, missing executable, malformed spec) raises. Expected failures are data; launch failures are bugs.
 - **AD-011** — The model is never the authority for executables: `ToolCall` names a logical tool, and only the execution-layer registry maps it to an executable. No arbitrary shell execution by default.
+- **AD-012** — `ModelResponse` is Nexus-shaped, not provider-shaped: the adapter translates provider → Nexus and drops provider-specific concepts (`finish_reason`, `system_fingerprint`, the `usage` dict); the caller only ever sees Nexus semantics.
 
 ## Contract conformance: MUST MATCH vs MAY DIFFER
 
@@ -423,6 +453,7 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 | Execution steps emit an event before completion (requested first, completed only on return) | `tests/golden/test_phase3_executor.py` |
 | Executor boundary holds across implementations (only serializable contracts cross) | `tests/conformance/test_executor_boundary.py` |
 | Real subprocess execution: bounded output, timeout, expected-fail-as-ToolResult, no shell | `tests/golden/test_phase3_subprocess.py` |
+| Model execution: provider→Nexus translation, request identity, rejection-as-failure, bounded output | `tests/golden/test_phase3_model.py` |
 | Router never bypasses policy | `tests/golden/test_phase1_composition.py` |
 | State is recoverable (a projection of events) | `tests/golden/test_phase0_foundation.py` |
 | The boring event envelope (one uniform shape) | enforced by the `Event` dataclass itself |

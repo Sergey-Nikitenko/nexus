@@ -135,19 +135,29 @@ class Episode:
 
 @dataclass
 class ModelRequest:
+    """A model request with its own identity, so `model.requested` and
+    `model.completed` can unambiguously belong to the same run/step."""
     messages: list[dict[str, Any]] = field(default_factory=list)
     max_tokens: int = 4096
     timeout_ms: int = 30000
+    request_id: str = field(default_factory=lambda: new_id("req"))
 
 
 @dataclass
 class ModelResponse:
+    """Nexus-shaped, NOT provider-shaped. The adapter translates the provider
+    (OpenAI/Ollama/local) into these Nexus semantics and drops the rest.
+
+    `success`/`error` mirror ToolResult: a valid response is success=True; a
+    provider rejection is success=False with an error (AD-010's model twin)."""
     model: str
     content: str
     tokens_in: int = 0
     tokens_out: int = 0
     latency_ms: int = 0
     cost: float = 0.0
+    success: bool = True
+    error: str | None = None
 
 
 @dataclass

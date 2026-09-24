@@ -53,9 +53,14 @@ class InstrumentedExecutor:
         return result
 
     def run_model(self, request: ModelRequest) -> ModelResponse:
+        # the request carries its own identity, so requested/completed are
+        # unambiguously the same run/step (even when one step makes many calls).
+        request_id = request.request_id or new_id("req")
         self._emit(EventType.MODEL_REQUESTED, "running",
-                   {"messages": len(request.messages), "max_tokens": request.max_tokens})
+                   {"request_id": request_id, "messages": len(request.messages),
+                    "max_tokens": request.max_tokens})
         response = self.inner.run_model(request)
-        self._emit(EventType.MODEL_COMPLETED, "success",
-                   {"model": response.model, "tokens_out": response.tokens_out})
+        self._emit(EventType.MODEL_COMPLETED, "success" if response.success else "failed",
+                   {"request_id": request_id, "model": response.model,
+                    "success": response.success, "error": response.error})
         return response

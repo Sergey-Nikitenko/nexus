@@ -33,4 +33,5 @@ class FakeExecutor:
             tokens_out=2,
             latency_ms=0,
             cost=0.0,
+            success=True,
         )

@@ -13,13 +13,12 @@ import dataclasses
 import json
 import os
 import sys
-import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 
-from fixtures import write_fake_model  # noqa: E402
+from fixtures import fake_model_argv  # noqa: E402
 
 from core.contracts import ModelRequest, ModelResponse, ToolCall, ToolResult  # noqa: E402
 from execution.fake import FakeExecutor  # noqa: E402
@@ -62,9 +61,7 @@ def main() -> None:
     sub = SubprocessToolExecutor([SubprocessSpec("echo", [sys.executable, "-c", "print('hi')"])])
     assert_tool_boundary(sub, ToolCall(tool_name="echo", arguments={}), "Subprocess")
 
-    tmp = tempfile.mkdtemp()
-    model = SubprocessModelExecutor(
-        ModelSpec("local-llm", [sys.executable, write_fake_model(tmp)]))
+    model = SubprocessModelExecutor(ModelSpec("local-llm", fake_model_argv()))
     assert_model_boundary(model, ModelRequest(messages=[{"role": "user", "content": "hi"}]), "Model")
 
     print("\nPASS: the Executor boundary is implementation-agnostic (only contracts cross).")

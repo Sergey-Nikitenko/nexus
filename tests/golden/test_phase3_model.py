@@ -18,7 +18,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 
-from fixtures import write_fake_model  # noqa: E402
+from fixtures import fake_model_argv  # noqa: E402
 
 from core.contracts import ModelRequest, ModelResponse  # noqa: E402
 from core.events import EventBus, EventType  # noqa: E402
@@ -35,9 +35,8 @@ def check(cond, msg):
 def main():
     print("Phase 3.3 golden task: model execution (provider -> Nexus, offline)")
     tmp = tempfile.mkdtemp()
-    model_path = write_fake_model(tmp)
     executor = SubprocessModelExecutor(ModelSpec(
-        name="local-llm", argv=[sys.executable, model_path], max_content_bytes=256))
+        name="local-llm", argv=fake_model_argv(), max_content_bytes=256))
 
     # 1. the contract + provider -> Nexus translation
     resp = executor.run_model(ModelRequest(messages=[{"role": "user", "content": "hello world"}]))

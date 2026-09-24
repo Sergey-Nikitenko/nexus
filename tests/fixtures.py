@@ -1,41 +1,34 @@
-"""Deterministic execution fixtures — a local fake model process.
+"""Deterministic execution fixtures — a local fake model.
 
 Not auto-run by check.py (doesn't match test_*.py). Provides a fake model for
-SubprocessModelExecutor: reads a JSON request on stdin, writes a provider-shaped
-JSON response on stdout. Deterministic and offline, so `py scripts/check.py`
-never depends on a live cloud model.
+SubprocessModelExecutor: it is an inline `python -c` command (NOT a file written
+to disk), so it is deterministic and offline — and it never writes an executable
+into a temp directory, which is exactly what trips AV/EDR "dropper" heuristics.
 
-Behavior is keyed off the last message content (a test-double convention):
+The fake model reads a JSON request on stdin and writes a provider-shaped JSON
+response on stdout, keyed off the last message content (a test-double convention):
 - default        -> a successful provider response carrying provider-specific
                     fields (`usage.prompt_tokens`, `finish_reason`,
                     `system_fingerprint`) that Nexus must translate away.
 - "__REJECT__"   -> a provider rejection `{"error": ...}`.
 - "__BIG__"      -> an oversized response, to prove bounded output.
 """
-import os
+import sys
 
-FAKE_MODEL_SOURCE = '''\
-import json, sys
-req = json.load(sys.stdin)
-content = req["messages"][-1]["content"]
-if content == "__REJECT__":
-    print(json.dumps({"error": "rate limited"}))
-elif content == "__BIG__":
-    print(json.dumps({"model": "m", "content": "x" * 200000, "usage": {}}))
-else:
-    print(json.dumps({
-        "model": "fake-local-llm",
-        "content": "echo: " + content,
-        "usage": {"prompt_tokens": len(content.split()), "completion_tokens": 2},
-        "finish_reason": "stop",
-        "system_fingerprint": "fp_123",
-    }))
-'''
+# Single-line, single-quoted Python (no double quotes, no newlines) so it passes
+# cleanly through subprocess argv as a `-c` argument on Windows.
+FAKE_MODEL_CODE = (
+    "import json,sys;"
+    "req=json.load(sys.stdin);"
+    "c=req['messages'][-1]['content'];"
+    "print(json.dumps({'error':'rate limited'}) if c=='__REJECT__' "
+    "else json.dumps({'model':'m','content':'x'*200000,'usage':{}}) if c=='__BIG__' "
+    "else json.dumps({'model':'fake-local-llm','content':'echo: '+c,"
+    "'usage':{'prompt_tokens':len(c.split()),'completion_tokens':2},"
+    "'finish_reason':'stop','system_fingerprint':'fp_123'}))"
+)
 
 
-def write_fake_model(directory: str) -> str:
-    """Write the fake model script and return its path."""
-    path = os.path.join(directory, "fake_model.py")
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(FAKE_MODEL_SOURCE)
-    return path
+def fake_model_argv() -> list[str]:
+    """The argv for a deterministic, disk-less fake model provider."""
+    return [sys.executable, "-c", FAKE_MODEL_CODE]

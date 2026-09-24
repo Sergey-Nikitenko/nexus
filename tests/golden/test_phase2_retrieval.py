@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from core.contracts import RetrievedChunk, RetrievalResult  # noqa: E402
-from knowledge.inmemory import InMemoryRetriever  # noqa: E402
+from knowledge.inmemory import ComposedRetriever  # noqa: E402
 
 
 def check(cond, msg):
@@ -26,7 +26,7 @@ def check(cond, msg):
 
 def main():
     print("Phase 2 golden tasks: retrieval through the Retriever contract")
-    ret = InMemoryRetriever()
+    ret = ComposedRetriever()
     ret.ingest("filesystem", "docs/auth.md", "v1",
                "the auth middleware verifies tokens; tokens are signed with a secret.",
                metadata={"team": "platform"})

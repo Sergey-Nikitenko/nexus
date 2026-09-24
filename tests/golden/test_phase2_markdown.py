@@ -12,7 +12,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from knowledge.inmemory import BagOfWordsEmbedder, InMemoryKnowledgeStore, InMemoryRetriever  # noqa: E402
+from knowledge.inmemory import BagOfWordsEmbedder, ComposedRetriever, InMemoryKnowledgeStore  # noqa: E402
 from knowledge.markdown import FilesystemMarkdownLoader, MarkdownChunker, MarkdownParser  # noqa: E402
 
 
@@ -31,7 +31,7 @@ def main():
             f.write(md)
             path = f.name
 
-        ret = InMemoryRetriever(
+        ret = ComposedRetriever(
             loader=FilesystemMarkdownLoader(),
             parser=MarkdownParser(),
             chunker=MarkdownChunker(),

@@ -110,8 +110,11 @@ class InMemoryKnowledgeStore:
         return self._current.get(identity)
 
 
-class InMemoryRetriever:
-    """Composes the reference stages into a Retriever (satisfies the protocol)."""
+class ComposedRetriever:
+    """Composes injectable stages (loader/parser/chunker/embedder/store) into a
+    Retriever. The default stages are the stdlib reference; swap the store for
+    persistence, the loader/parser/chunker for real files — the caller never
+    knows which implementation sits behind each contract."""
 
     def __init__(self, loader=None, parser=None, chunker=None, embedder=None, store=None):
         self.loader = loader or FileSystemLoader()

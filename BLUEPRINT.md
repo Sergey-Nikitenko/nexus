@@ -177,6 +177,32 @@ into an **Episode**:
 **Phase 2.5 acceptance:** *Memory is the sequence plane — deterministic and
 replaceable without touching the orchestrator.*
 
+### Phase 2.6 — hybrid retrieval (fusion, not replacement)
+
+The orchestrator calls one method — `retriever.search(query, filters)` — and
+gets one `RetrievalResult`, whether one source or many produced it. A hybrid
+retriever fans the query out to its candidate sources (vector + keyword + ...),
+merges their results **by chunk identity**, and reranks the union:
+
+    query ──► vector source ──┐
+    query ──► keyword source ─┼─► merge (identity) ─► rerank ─► RetrievalResult
+    query ──► future source ──┘
+
+- **Fusion is by identity**, not by index: a chunk both sources found surfaces
+  *once* — the same `(source, document, location, version)` discipline as the
+  store.
+- **The reranker is an internal stage**, deliberately absent from the Retriever
+  contract. Callers never touch it; swapping it changes only ranking, never the
+  boundary. (The contract stays `search(query, filters) -> RetrievalResult`.)
+- **The metadata filter is a named stage**, applied at the boundary even if a
+  source forgot to.
+- A real semantic source (Chroma + embeddings) drops in as one more entry in
+  `sources` — nothing else moves. Hybrid retrieval is an *implementation
+  detail*, not an interface.
+
+**Phase 2.6 acceptance:** *Replacing a single retriever with a hybrid changes
+nothing for the caller — same contract, same result shape, reranking hidden.*
+
 ### Phase 3 — Execution plane
 The loop, with a REPLAN branch and hard budgets:
 
@@ -300,6 +326,9 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 | No provider leakage (core consumes contracts, adapters produce them) | `tests/conformance/test_no_provider_leakage.py` |
 | Retriever boundary holds across implementations (same contract, no ranking assumption) | `tests/conformance/test_retriever_contract.py` |
 | Persisted store is observationally equivalent across a restart | `tests/conformance/test_persistence_contract.py` |
+| Ingestion is idempotent (ingest x3 = one logical chunk) | `tests/golden/test_phase2_idempotency.py` |
+| Memory is the sequence plane (deterministic run→episode projection, no LLM) | `tests/golden/test_phase2_memory.py` |
+| Hybrid retrieval is an implementation detail (one contract, reranker internal) | `tests/golden/test_phase2_hybrid.py` |
 | Router never bypasses policy | `tests/golden/test_phase1_composition.py` |
 | State is recoverable (a projection of events) | `tests/golden/test_phase0_foundation.py` |
 | The boring event envelope (one uniform shape) | enforced by the `Event` dataclass itself |

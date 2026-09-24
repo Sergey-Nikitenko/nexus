@@ -14,6 +14,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from core.contracts import RetrievedChunk, RetrievalResult  # noqa: E402
+from knowledge.hybrid import HybridRetriever  # noqa: E402
 from knowledge.inmemory import ComposedRetriever  # noqa: E402
 from knowledge.keyword import KeywordRetriever  # noqa: E402
 
@@ -47,6 +48,7 @@ def main() -> None:
     print("Conformance: Retriever boundary holds across implementations")
     assert_retriever_contract(ComposedRetriever(), "InMemory")
     assert_retriever_contract(KeywordRetriever(), "Keyword")
+    assert_retriever_contract(HybridRetriever([ComposedRetriever(), KeywordRetriever()]), "Hybrid")
     print("\nPASS: the Retriever contract is implementation-agnostic (replaceable).")
 
 

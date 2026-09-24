@@ -268,6 +268,36 @@ foundation from Phase 0 finally gets exercised by real execution.
 **Phase 3.1 acceptance:** *A tool/model step is observable in the event log
 before it is complete — and a step that never returns is observably incomplete.*
 
+### Phase 3.2 — subprocess tool execution (the first real Executor)
+
+`ToolCall` names a LOGICAL tool ("formatter"); it never names an executable. The
+execution-layer registry maps that name to a `SubprocessSpec` (argv template +
+limits), so the model is never the authority that chooses an arbitrary
+executable. The path is:
+
+    CONTROL → ToolCall → Executor → tool registry → subprocess adapter → OS process
+
+- **`SubprocessToolExecutor`** runs the spec as an argv list with `shell=False`
+  — no shell interpretation, no `shell(command_from_model)`.
+- **Failure semantics (AD-010):** an *expected* tool outcome (non-zero exit,
+  timeout) is a `ToolResult(success=False, error=…)`; a *launch* failure
+  (unknown tool, missing executable, malformed spec) raises. The former is data
+  about the tool; the latter is a bug in the system.
+- **Timeout is contract semantics** (declared on the spec): a non-exiting
+  process is killed and reported, never allowed to hang Nexus.
+- **Output is bounded** (spec-declared cap): no unlimited stdout/stderr into an
+  event or trace; truncation is explicit.
+- **Only contracts cross the boundary**: no Popen, pipe, or raw return code
+  escapes — the caller gets a `ToolResult` of plain, serializable data.
+
+`FakeExecutor` stays permanent as the reference and fast test fixture; the
+Subprocess adapter and the future MCP adapter both produce the same `ToolResult`
+behind the same `Executor` protocol.
+
+**Phase 3.2 acceptance:** *A real subprocess executor satisfies the execution
+semantics FakeExecutor established, without changing Executor, the orchestrator,
+or the control plane.*
+
 ### Phase 4 — Surface
 API (REST + WebSocket), dashboard (run view, trace tree, approval queue, *Why*
 panel), CLI. The dashboard is driven directly off the decision objects.
@@ -321,6 +351,8 @@ Decisions whose wrong interpretation could cause regressions. Not a changelog.
 - **AD-007** — Memory is the sequence plane, separate from knowledge: a finished run projects into an Episode deterministically (no LLM); outcome derives from events.
 - **AD-008** — The reranker is internal to a Retriever implementation, never part of the Retriever contract (`search(query, filters) -> RetrievalResult`).
 - **AD-009** — Every externally observable execution step emits an event *before* it is considered complete (`*.requested` first, `*.completed` only on return); a step that never returns is observably incomplete.
+- **AD-010** — Execution failure semantics: an *expected* tool outcome (non-zero exit, timeout) is `ToolResult(success=False, …)`; a *launch* failure (unknown tool, missing executable, malformed spec) raises. Expected failures are data; launch failures are bugs.
+- **AD-011** — The model is never the authority for executables: `ToolCall` names a logical tool, and only the execution-layer registry maps it to an executable. No arbitrary shell execution by default.
 
 ## Contract conformance: MUST MATCH vs MAY DIFFER
 
@@ -389,6 +421,8 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 | Memory is the sequence plane (deterministic run→episode projection, no LLM) | `tests/golden/test_phase2_memory.py` |
 | Hybrid retrieval is an implementation detail (one contract, reranker internal) | `tests/golden/test_phase2_hybrid.py` |
 | Execution steps emit an event before completion (requested first, completed only on return) | `tests/golden/test_phase3_executor.py` |
+| Executor boundary holds across implementations (only serializable contracts cross) | `tests/conformance/test_executor_boundary.py` |
+| Real subprocess execution: bounded output, timeout, expected-fail-as-ToolResult, no shell | `tests/golden/test_phase3_subprocess.py` |
 | Router never bypasses policy | `tests/golden/test_phase1_composition.py` |
 | State is recoverable (a projection of events) | `tests/golden/test_phase0_foundation.py` |
 | The boring event envelope (one uniform shape) | enforced by the `Event` dataclass itself |

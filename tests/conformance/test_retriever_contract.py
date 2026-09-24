@@ -14,8 +14,9 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from core.contracts import RetrievedChunk, RetrievalResult  # noqa: E402
+from knowledge.chroma import ChromaKnowledgeStore  # noqa: E402
 from knowledge.hybrid import HybridRetriever  # noqa: E402
-from knowledge.inmemory import ComposedRetriever  # noqa: E402
+from knowledge.inmemory import ComposedRetriever, HashingEmbedder  # noqa: E402
 from knowledge.keyword import KeywordRetriever  # noqa: E402
 
 
@@ -49,6 +50,11 @@ def main() -> None:
     assert_retriever_contract(ComposedRetriever(), "InMemory")
     assert_retriever_contract(KeywordRetriever(), "Keyword")
     assert_retriever_contract(HybridRetriever([ComposedRetriever(), KeywordRetriever()]), "Hybrid")
+    # Chroma is implementation #3: same contract, dense embedder, ephemeral client.
+    assert_retriever_contract(
+        ComposedRetriever(store=ChromaKnowledgeStore(), embedder=HashingEmbedder()),
+        "Chroma",
+    )
     print("\nPASS: the Retriever contract is implementation-agnostic (replaceable).")
 
 

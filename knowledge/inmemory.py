@@ -73,6 +73,33 @@ class BagOfWordsEmbedder:
         return _bow(text)
 
 
+class HashingEmbedder:
+    """Fixed-dimension dense embedder via the hashing trick.
+
+    Stdlib-only and deterministic (md5 — never Python's salted `hash()`, which
+    would break across restarts). Produces a unit-length vector of fixed `dim`,
+    the shape a dense vector store (Chroma) needs. A real embedding model
+    (OpenAI/Ollama) is a later adapter behind the same Embedder contract — the
+    store never knows which produced the vector.
+    """
+
+    def __init__(self, dim: int = 128):
+        self.dim = dim
+
+    def embed(self, text: str) -> list[float]:
+        vec = [0.0] * self.dim
+        for token in _WORD.findall(text.lower()):
+            bucket = int.from_bytes(
+                hashlib.md5(b"bucket:" + token.encode("utf-8")).digest()[:8], "little"
+            ) % self.dim
+            sign = 1.0 if int.from_bytes(
+                hashlib.md5(b"sign:" + token.encode("utf-8")).digest()[:8], "little"
+            ) & 1 else -1.0
+            vec[bucket] += sign
+        norm = math.sqrt(sum(v * v for v in vec)) or 1.0
+        return [v / norm for v in vec]
+
+
 class InMemoryKnowledgeStore:
     """Stores chunks + embeddings. Retrieval returns only the CURRENT version of
     each chunk identity — stale versions are retained for audit but never

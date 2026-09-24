@@ -165,10 +165,18 @@ embeddings) is just another implementation of the same contracts.
 store retrieves only the **current** version and never surfaces stale ones — so
 the model never receives v1 and v2 at once without knowing why.
 
-**Phase 2 acceptance:** *Knowledge can be replaced without changing the
-orchestrator.* That is the victory — not "Chroma works." The stdlib
-implementation (`knowledge/inmemory.py`) is **permanent** — the reference
-implementation and the fast test fixture — never disposable scaffolding.
+**Phase 2 acceptance (frozen):** *Knowledge and memory are replaceable,
+persistent capabilities exposed through stable contracts; provenance, identity,
+versioning, filtering, and lifecycle semantics survive implementation changes
+and process restarts.*
+
+That claim is demonstrated, not asserted, by the progression that shipped:
+reference implementation → second implementation → real source → persistent
+store → restart → idempotent ingestion → memory → hybrid retrieval → Chroma
+(implementation #3). Chroma passes the conformance suite **unchanged** — the
+anticlimax is the point. The stdlib implementation (`knowledge/inmemory.py`) is
+**permanent** — the reference implementation and the fast test fixture — never
+disposable scaffolding.
 
 ### Phase 2.5 — memory as the sequence plane
 
@@ -309,9 +317,11 @@ a disguised implementation spec. Don't.
 Contract → stdlib reference → second independent implementation → conformance → production adapter
 ```
 
-Chroma, when it arrives, is **implementation #3**, not an architectural event.
-If adding it requires modifying the orchestrator, the boundary — not the new
-implementation — is what's wrong.
+Chroma is **implementation #3** — landed in `knowledge/chroma.py` — and it is not
+an architectural event: it satisfies the same `KnowledgeStore` protocol, and the
+conformance suite passed with it **unchanged**. If adding it had required
+modifying the orchestrator, the boundary — not the new implementation — would be
+what was wrong.
 
 ## Repository layout
 
@@ -348,6 +358,7 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 | No provider leakage (core consumes contracts, adapters produce them) | `tests/conformance/test_no_provider_leakage.py` |
 | Retriever boundary holds across implementations (same contract, no ranking assumption) | `tests/conformance/test_retriever_contract.py` |
 | Persisted store is observationally equivalent across a restart | `tests/conformance/test_persistence_contract.py` |
+| Chroma (implementation #3) persists across a real process restart, contract unchanged | `tests/conformance/test_chroma_persistence.py` |
 | Ingestion is idempotent (ingest x3 = one logical chunk) | `tests/golden/test_phase2_idempotency.py` |
 | Memory is the sequence plane (deterministic run→episode projection, no LLM) | `tests/golden/test_phase2_memory.py` |
 | Hybrid retrieval is an implementation detail (one contract, reranker internal) | `tests/golden/test_phase2_hybrid.py` |

@@ -8,16 +8,9 @@ into permission. That boundary is the whole point.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
 
-from core.contracts import Decision, Risk
+from core.contracts import Decision, PolicyVerdict, Risk
 from .tools import ToolSpec
-
-
-class PolicyVerdict(str, Enum):
-    ALLOW = "allow"
-    DENY = "deny"
-    APPROVAL_REQUIRED = "approval_required"
 
 
 @dataclass

@@ -327,6 +327,49 @@ boundary pattern 3.2 did for tools.
 FakeExecutor established, and the caller only ever sees a Nexus-shaped
 ModelResponse — never a provider object.*
 
+### Phase 3.4 — the orchestrator (the central nervous system)
+
+The first composition of everything built so far:
+
+                 ORCHESTRATOR
+                      │
+              ┌───────┼───────┐
+              ▼       ▼       ▼
+          Retriever  Executor  State
+              │       │        │
+              │       ▼        │
+              │  Model / Tool  │
+              └───────┴────────┘
+                      │
+                   Events
+
+- **The orchestrator owns sequencing and correlation; capabilities own
+  execution (AD-013).** It may call `retriever.search`, `executor.run_model`,
+  `executor.execute_tool`, `policy.decide_tool`, `state`, `emit` — never
+  `subprocess.Popen`, `open`, `requests.get`, a vector store, a model SDK, or an
+  MCP client. `tests/conformance/test_orchestrator_purity.py` enforces this with
+  an AST gate on `execution/orchestrator.py`.
+- **The deterministic loop:** `Task → plan → retrieve → model → [tool] → model →
+  verify → answer`. No replanning, retries, or real verification yet (that's
+  3.5); 3.4 establishes *coordination semantics*.
+- **A model SUGGESTS a tool; the orchestrator DECIDES.** `ModelResponse.tool_calls`
+  is structured tool intent (Nexus `ToolCall` contracts, not provider-shaped).
+  The orchestrator runs each suggestion through the Phase 1 policy —
+  `DENY / APPROVAL_REQUIRED / ALLOW` — so `Model → Tool` never bypasses
+  `Router → Policy → Execution`. The golden test proves a READ tool executes, a
+  WRITE tool is approval-gated, and a DESTRUCTIVE tool is denied, all inside the
+  loop.
+- **`PolicyVerdict` moved to core** — it is a contract (like `Decision`/`Risk`)
+  that crosses control → execution; the policy *engine* stays in control/. That
+  is what keeps `execution/` importing core only, per the layer boundaries.
+- **Recovery reconnects:** the run returns both its live `RunState` and its event
+  log, and the golden test asserts `reconstruct(events) == live_state` — the
+  Phase 0 crash-recovery guarantee, now exercised by a real loop.
+
+**Phase 3.4 acceptance:** *Given deterministic capabilities, Nexus coordinates a
+complete multi-step task, emits a causally ordered trace, preserves recoverable
+state, and never performs capability work itself.*
+
 ### Phase 4 — Surface
 API (REST + WebSocket), dashboard (run view, trace tree, approval queue, *Why*
 panel), CLI. The dashboard is driven directly off the decision objects.
@@ -383,6 +426,7 @@ Decisions whose wrong interpretation could cause regressions. Not a changelog.
 - **AD-010** — Execution failure semantics: an *expected* tool outcome (non-zero exit, timeout) is `ToolResult(success=False, …)`; a *launch* failure (unknown tool, missing executable, malformed spec) raises. Expected failures are data; launch failures are bugs.
 - **AD-011** — The model is never the authority for executables: `ToolCall` names a logical tool, and only the execution-layer registry maps it to an executable. No arbitrary shell execution by default.
 - **AD-012** — `ModelResponse` is Nexus-shaped, not provider-shaped: the adapter translates provider → Nexus and drops provider-specific concepts (`finish_reason`, `system_fingerprint`, the `usage` dict); the caller only ever sees Nexus semantics.
+- **AD-013** — The orchestrator owns sequencing and correlation; capabilities own execution. It composes injected capabilities (retriever, executor, policy, tools, state, bus) and never performs capability work itself (no subprocess/file/network/vector-store/model-SDK/MCP).
 
 ## Contract conformance: MUST MATCH vs MAY DIFFER
 
@@ -454,6 +498,8 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 | Executor boundary holds across implementations (only serializable contracts cross) | `tests/conformance/test_executor_boundary.py` |
 | Real subprocess execution: bounded output, timeout, expected-fail-as-ToolResult, no shell | `tests/golden/test_phase3_subprocess.py` |
 | Model execution: provider→Nexus translation, request identity, rejection-as-failure, bounded output | `tests/golden/test_phase3_model.py` |
+| Orchestrator coordinates, never performs capability work (AST gate) | `tests/conformance/test_orchestrator_purity.py` |
+| The full deterministic loop: Task→Answer, ordered trace, recoverable state, policy authoritative | `tests/golden/test_phase3_orchestrator.py` |
 | Router never bypasses policy | `tests/golden/test_phase1_composition.py` |
 | State is recoverable (a projection of events) | `tests/golden/test_phase0_foundation.py` |
 | The boring event envelope (one uniform shape) | enforced by the `Event` dataclass itself |

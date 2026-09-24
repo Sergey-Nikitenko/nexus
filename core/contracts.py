@@ -43,6 +43,15 @@ class Risk(str, Enum):
     DESTRUCTIVE = "destructive"
 
 
+class PolicyVerdict(str, Enum):
+    """A policy decision's outcome — a contract, like `Decision`, that crosses the
+    control -> execution boundary. The policy ENGINE lives in control/; this enum
+    is what the execution plane consumes."""
+    ALLOW = "allow"
+    DENY = "deny"
+    APPROVAL_REQUIRED = "approval_required"
+
+
 # --------------------------------------------------------------------------
 # Core objects
 # --------------------------------------------------------------------------
@@ -158,6 +167,7 @@ class ModelResponse:
     cost: float = 0.0
     success: bool = True
     error: str | None = None
+    tool_calls: list[ToolCall] = field(default_factory=list)
 
 
 @dataclass

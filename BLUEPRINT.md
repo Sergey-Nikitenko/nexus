@@ -127,6 +127,11 @@ reproducible runs.
 | `web` | canonical URL | heading / section | content hash or crawl timestamp |
 | `filesystem` | relative path | page / line range | content hash |
 
+**Version semantics.** *"current"* is scoped to `(source, document, location)`.
+Different knowledge identities may legitimately have different current versions.
+Staleness is **never** inferred globally — a store that collapses to a single
+global version is an architectural regression, not an optimization.
+
 ### Phase 2.2 — ingestion as a boundary
 
 Each stage is independently replaceable behind a contract:
@@ -142,7 +147,9 @@ store retrieves only the **current** version and never surfaces stale ones — s
 the model never receives v1 and v2 at once without knowing why.
 
 **Phase 2 acceptance:** *Knowledge can be replaced without changing the
-orchestrator.* That is the victory — not "Chroma works."
+orchestrator.* That is the victory — not "Chroma works." The stdlib
+implementation (`knowledge/inmemory.py`) is **permanent** — the reference
+implementation and the fast test fixture — never disposable scaffolding.
 
 ### Phase 3 — Execution plane
 The loop, with a REPLAN branch and hard budgets:
@@ -229,6 +236,7 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 | Control plane is pure (decides, never executes/emits) | `tests/conformance/test_control_plane_purity.py` |
 | Side effects require the `Executor` capability (Decision ≠ Action) | `tests/conformance/test_control_plane_purity.py` |
 | No provider leakage (core consumes contracts, adapters produce them) | `tests/conformance/test_no_provider_leakage.py` |
+| Retriever boundary holds across implementations (same contract, no ranking assumption) | `tests/conformance/test_retriever_contract.py` |
 | Router never bypasses policy | `tests/golden/test_phase1_composition.py` |
 | State is recoverable (a projection of events) | `tests/golden/test_phase0_foundation.py` |
 | The boring event envelope (one uniform shape) | enforced by the `Event` dataclass itself |

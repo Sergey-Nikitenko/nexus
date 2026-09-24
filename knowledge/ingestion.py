@@ -6,6 +6,7 @@ time — the key to stale-embedding detection, updates, and reproducible runs.
 """
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -38,3 +39,11 @@ def chunk_identity(c: Chunk) -> tuple[str, str, str]:
     """The stable identity of a chunk: (source, document, location).
     Same identity + different version = same knowledge, updated."""
     return (c.source, c.document, c.location)
+
+
+def stable_chunk_id(source: str, document: str, location: str, version: str) -> str:
+    """Deterministic chunk id from (identity, version). Re-ingesting the same
+    chunk produces the same id, so `add` replaces instead of duplicating
+    (idempotency: ingest(x) x3 == one logical chunk)."""
+    key = f"{source}\x00{document}\x00{location}\x00{version}".encode()
+    return f"chunk_{hashlib.sha1(key).hexdigest()[:16]}"

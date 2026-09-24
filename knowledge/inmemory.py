@@ -11,8 +11,8 @@ import math
 import re
 from collections import Counter
 
-from core.contracts import RetrievedChunk, RetrievalResult, new_id
-from .ingestion import Chunk, Document
+from core.contracts import RetrievedChunk, RetrievalResult
+from .ingestion import Chunk, Document, stable_chunk_id
 
 _WORD = re.compile(r"[a-z0-9]+")
 
@@ -44,7 +44,8 @@ class WordChunker:
         while start < len(words):
             text = " ".join(words[start:start + self.size])
             chunks.append(Chunk(
-                id=new_id("chunk"), text=text, source=doc.source,
+                id=stable_chunk_id(doc.source, doc.document, f"chunk {i}", doc.version),
+                text=text, source=doc.source,
                 document=doc.document, location=f"chunk {i}",
                 version=doc.version, metadata=dict(doc.metadata),
             ))
@@ -87,7 +88,9 @@ class InMemoryKnowledgeStore:
         identity = (chunk.source, chunk.document, chunk.location)
         self._chunks[chunk.id] = chunk
         self._vectors[chunk.id] = embedding
-        self._by_identity.setdefault(identity, {}).setdefault(chunk.version, []).append(chunk.id)
+        ids = self._by_identity.setdefault(identity, {}).setdefault(chunk.version, [])
+        if chunk.id not in ids:
+            ids.append(chunk.id)  # idempotent: same (identity, version) -> no duplicate
         self._current[identity] = chunk.version  # last-add wins = current
 
     def search(self, embedding, k, filters=None):

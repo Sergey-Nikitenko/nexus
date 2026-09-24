@@ -9,8 +9,7 @@ from __future__ import annotations
 import hashlib
 import re
 
-from core.contracts import new_id
-from .ingestion import Chunk, Document
+from .ingestion import Chunk, Document, stable_chunk_id
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.*)$", re.MULTILINE)
 
@@ -42,7 +41,8 @@ class MarkdownChunker:
             if not text:
                 continue
             chunks.append(Chunk(
-                id=new_id("chunk"), text=text, source=doc.source,
+                id=stable_chunk_id(doc.source, doc.document, heading or f"section {i}", doc.version),
+                text=text, source=doc.source,
                 document=doc.document, location=heading or f"section {i}",
                 version=doc.version, metadata=dict(doc.metadata),
             ))

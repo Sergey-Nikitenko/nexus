@@ -204,6 +204,41 @@ G010 detect failed verification and replan
 
 This is an engineering regression suite, not a marketing score.
 
+## Architectural decisions (AD)
+
+Decisions whose wrong interpretation could cause regressions. Not a changelog.
+
+- **AD-001** — Knowledge versioning is per identity `(source, document, location)`, never global.
+- **AD-002** — Retriever implementations may rank differently; only the contract must match.
+- **AD-003** — Retrieved provenance (source/document/location/version/metadata) crosses the boundary with the chunk.
+- **AD-004** — Provider objects never cross the boundary; adapters produce contracts.
+- **AD-005** — Control plane is pure (decides, never executes); side effects require the `Executor` capability.
+
+## Contract conformance: MUST MATCH vs MAY DIFFER
+
+| MUST MATCH (the boundary) | MAY DIFFER (implementation detail) |
+|---|---|
+| contract shape | ranking |
+| identity | scoring |
+| provenance | chunk boundaries |
+| version | embedding strategy |
+| metadata | retrieval algorithm |
+| filters | |
+| error semantics | |
+
+A conformance test that asserts a MAY-DIFFER property turns the abstraction into
+a disguised implementation spec. Don't.
+
+## The progression (every capability)
+
+```
+Contract → stdlib reference → second independent implementation → conformance → production adapter
+```
+
+Chroma, when it arrives, is **implementation #3**, not an architectural event.
+If adding it requires modifying the orchestrator, the boundary — not the new
+implementation — is what's wrong.
+
 ## Repository layout
 
 ```

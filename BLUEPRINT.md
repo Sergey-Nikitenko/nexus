@@ -114,6 +114,19 @@ Model registry → Router → Policy → Evaluator → Tool registry.
 - **Memory:** episodic, semantic, user/task state. "Memory" is not a synonym
   for "vector database."
 
+### Knowledge identity & version semantics
+
+A chunk's **identity** is `(source, document, location)`. Two chunks with the
+same identity but a different version are the *same knowledge at different
+points in time* — the key to stale-embedding detection, updates, and
+reproducible runs.
+
+| source | document | location | version |
+|---|---|---|---|
+| `github` | repo/path | line range / section | commit SHA |
+| `web` | canonical URL | heading / section | content hash or crawl timestamp |
+| `filesystem` | relative path | page / line range | content hash |
+
 ### Phase 3 — Execution plane
 The loop, with a REPLAN branch and hard budgets:
 
@@ -205,3 +218,7 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 
 As each phase ships, its architectural principles get added here with their test.
 A principle without a test is not a principle — it is an intention.
+
+A conformance test exists only because there is an architectural property to
+preserve — never because a code pattern "feels nicer." The suite is a map of
+intent, not a second linter.

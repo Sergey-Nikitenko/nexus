@@ -132,6 +132,25 @@ Different knowledge identities may legitimately have different current versions.
 Staleness is **never** inferred globally — a store that collapses to a single
 global version is an architectural regression, not an optimization.
 
+### Store lifecycle semantics (AD-006)
+
+Ingestion never deletes; it only ever supersedes. The rules, so a retrying
+backend and a replacing store behave identically:
+
+- **Replacement** — adding an existing identity with a *new* version makes that
+  version **current**; the old version is retained for audit, never surfaced by
+  search.
+- **Idempotency** — re-adding the *same* `(identity, version)` is a no-op
+  (deterministic stable id ⇒ replace, not duplicate).
+- **Source disappearance** — a source absent from a later ingest is **not**
+  auto-deleted; removal is an explicit operation, never an implicit side effect.
+- **Stale deletion** — stale versions are retained; pruning is a separate,
+  explicit concern, not something search or ingest does on its own.
+- **Metadata-only change** — metadata is *not* identity. A metadata change
+  without a version bump updates the record in place (same id, same version).
+- **Concurrent writers** — last-write-wins for "current", per identity. No
+  merge: ordering is the only tiebreak, and it is atomic per record.
+
 ### Phase 2.2 — ingestion as a boundary
 
 Each stage is independently replaceable behind a contract:
@@ -265,6 +284,9 @@ Decisions whose wrong interpretation could cause regressions. Not a changelog.
 - **AD-003** — Retrieved provenance (source/document/location/version/metadata) crosses the boundary with the chunk.
 - **AD-004** — Provider objects never cross the boundary; adapters produce contracts.
 - **AD-005** — Control plane is pure (decides, never executes); side effects require the `Executor` capability.
+- **AD-006** — Store lifecycle: ingestion supersedes, never deletes; last-write-wins per identity; idempotent re-add; metadata is not identity.
+- **AD-007** — Memory is the sequence plane, separate from knowledge: a finished run projects into an Episode deterministically (no LLM); outcome derives from events.
+- **AD-008** — The reranker is internal to a Retriever implementation, never part of the Retriever contract (`search(query, filters) -> RetrievalResult`).
 
 ## Contract conformance: MUST MATCH vs MAY DIFFER
 

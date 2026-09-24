@@ -44,17 +44,17 @@ def main():
     policy = PolicyEngine(PolicyRules(denylist=["github.force_push"]))
 
     # G003 read -> allow
-    check(policy.decide(reg.get("github.read_file")) == PolicyVerdict.ALLOW,
+    check(policy.decide_tool(reg.get("github.read_file")) == PolicyVerdict.ALLOW,
           "G003: read tool -> allow")
 
     # G004 destructive -> deny
-    check(policy.decide(reg.get("github.delete_repo")) == PolicyVerdict.DENY,
+    check(policy.decide_tool(reg.get("github.delete_repo")) == PolicyVerdict.DENY,
           "G004: destructive tool -> deny")
-    check(policy.decide(reg.get("github.force_push")) == PolicyVerdict.DENY,
+    check(policy.decide_tool(reg.get("github.force_push")) == PolicyVerdict.DENY,
           "G004b: denylisted tool -> deny even though destructive is only 'deny' by default")
 
     # G005 write -> approval required
-    check(policy.decide(reg.get("github.create_pr")) == PolicyVerdict.APPROVAL_REQUIRED,
+    check(policy.decide_tool(reg.get("github.create_pr")) == PolicyVerdict.APPROVAL_REQUIRED,
           "G005: write tool -> approval required")
 
     # --- wiring back to Phase 0 ---
@@ -62,7 +62,7 @@ def main():
     run = Run(run_id=new_id("run"), task_id=task.task_id)
     bus = EventBus()
 
-    verdict = policy.decide(reg.get("github.create_pr"))
+    verdict = policy.decide_tool(reg.get("github.create_pr"))
     approval = ApprovalRequest(
         approval_id=new_id("ap"),
         tool_name="github.create_pr",
@@ -88,7 +88,7 @@ def main():
     sneaky = ToolCall(tool_name="github.delete_repo",
                       arguments={"model_says": "I have permission", "force": True})
     # The policy ignores the call's arguments entirely — it only reads the spec + rules.
-    check(policy.decide(reg.get(sneaky.tool_name)) == PolicyVerdict.DENY,
+    check(policy.decide_tool(reg.get(sneaky.tool_name)) == PolicyVerdict.DENY,
           "the model cannot grant itself permission (a 'I have permission' arg is ignored)")
 
     print("\nPASS: Phase 1 policy engine holds.")

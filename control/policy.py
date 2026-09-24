@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
-from core.contracts import Risk
+from core.contracts import Decision, Risk
 from .tools import ToolSpec
 
 
@@ -28,13 +28,15 @@ class PolicyRules:
     destructive: PolicyVerdict = PolicyVerdict.DENY
     allowlist: list[str] = field(default_factory=list)
     denylist: list[str] = field(default_factory=list)
+    # Model policy: may private data ever be processed by a cloud model?
+    allow_cloud_for_private: bool = False
 
 
 class PolicyEngine:
     def __init__(self, rules: PolicyRules | None = None) -> None:
         self.rules = rules or PolicyRules()
 
-    def decide(self, tool: ToolSpec) -> PolicyVerdict:
+    def decide_tool(self, tool: ToolSpec) -> PolicyVerdict:
         # Denylist wins first (an explicitly-banned tool is never callable).
         if tool.name in self.rules.denylist:
             return PolicyVerdict.DENY
@@ -47,3 +49,11 @@ class PolicyEngine:
             Risk.DESTRUCTIVE: self.rules.destructive,
         }
         return verdict_by_risk[tool.risk]
+
+    def decide_model(self, decision: Decision, *, private: bool) -> PolicyVerdict:
+        """Gate a model choice. The router proposes; the policy disposes.
+        Default rule: private data never leaves the machine to a cloud model.
+        The router can never bypass this — the policy is the authority."""
+        if private and decision.provider == "cloud" and not self.rules.allow_cloud_for_private:
+            return PolicyVerdict.DENY
+        return PolicyVerdict.ALLOW

@@ -28,6 +28,25 @@ Components never touch another component's internal state. They communicate by
 **interface** (`component → interface → component`) or by **event**
 (`component → event → consumer`).
 
+## Control plane vs execution plane (the distinction that matters)
+
+The directory split (`control/` vs `execution/`) is secondary. The rule is:
+
+- **Control plane** answers *"what SHOULD happen?"* — router, policy, evaluator,
+  tool registry, model registry. These are **pure**: they take inputs and return
+  a contract (`Decision` / `Verdict` / `Evaluation`). No state mutation, no tool
+  calls, no network.
+- **Execution plane** answers *"what DID happen?"* — orchestrator, workers, queue,
+  tool execution, verification. These perform the actions and emit events.
+
+Data flow:
+
+    control  --Decision-->  execution
+    execution --Event---->  observability/control
+
+**The router proposes; the policy disposes.** The router never bypasses policy,
+and control-plane components never execute — they only decide.
+
 ## The contracts (core/contracts.py)
 
 `Task` → `Run` → `Step`, plus `State`, `Event`, `Decision`, `ToolCall`,

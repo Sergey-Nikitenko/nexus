@@ -97,9 +97,22 @@ class ToolResult:
 
 
 @dataclass
+class RetrievedChunk:
+    """A retrieved chunk with full provenance, so a consumer never reaches back
+    into the vector store to answer "where did this come from?"."""
+    text: str
+    source: str            # file path / URL / repo
+    document: str          # parent document id or title
+    location: str = ""     # section / line range within the document
+    version: str = ""      # commit / version stamp
+    relevance: float = 0.0
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class RetrievalResult:
     query: str
-    chunks: list[dict[str, Any]] = field(default_factory=list)
+    chunks: list[RetrievedChunk] = field(default_factory=list)
 
 
 @dataclass

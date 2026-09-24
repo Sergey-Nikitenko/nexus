@@ -12,8 +12,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from core.contracts import (  # noqa: E402
-    Decision, Evaluation, Event, RetrievalResult, Run, Step, StepStatus,
-    Task, TaskStatus, ToolCall, Trace, new_id, utcnow,
+    Decision, Evaluation, Event, RetrievedChunk, RetrievalResult, Run, Step,
+    StepStatus, Task, TaskStatus, ToolCall, Trace, new_id, utcnow,
 )
 from core.events import EventBus, EventType  # noqa: E402
 from core.state import RunState  # noqa: E402
@@ -50,7 +50,9 @@ def fake_agent(task: Task):
     trace.nodes.append({"type": "plan", "step_id": s.step_id})
 
     # retrieve
-    ret = RetrievalResult(query="auth bug", chunks=[{"source": "middleware.py", "text": "..."}])
+    ret = RetrievalResult(query="auth bug", chunks=[
+        RetrievedChunk(text="...", source="middleware.py", document="middleware.py"),
+    ])
     _emit(bus, EventType.RETRIEVAL_COMPLETED, run, "retrieval", "success", {"chunks": len(ret.chunks)})
     trace.nodes.append({"type": "retrieve", "chunks": len(ret.chunks)})
 

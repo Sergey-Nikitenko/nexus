@@ -243,6 +243,31 @@ Budgets: `max_steps`, `max_retries`, `max_cost`, `max_execution_time`.
 Task queue + workers are first-class from day one (even one worker), so
 multi-worker in Phase 6 is not a redesign.
 
+### Phase 3.1 — execution contracts + the reference executor
+
+The `Executor` capability (already a Phase 0 contract) is the ONLY sanctioned
+path to a side effect: `execute_tool(ToolCall) -> ToolResult` and
+`run_model(ModelRequest) -> ModelResponse`. Phase 3.1 lands its reference
+implementation — a deterministic, side-effect-free `FakeExecutor` — so the
+*execution semantics* are provable before any real side effect (subprocess,
+network, MCP, model SDK) exists.
+
+**The invariant (AD-009).** Every externally observable execution step emits an
+event BEFORE it is considered complete:
+
+    ToolCall ──► tool.requested ──► execute ──► ToolResult ──► tool.completed
+    ModelRequest ──► model.requested ──► run ──► ModelResponse ──► model.completed
+
+`InstrumentedExecutor` (an `Executor` wrapper) enforces it: the `*.requested`
+event fires first, unconditionally; the `*.completed` event fires only on
+return. If the inner executor raises, the log shows `*.requested` with no
+`*.completed` — the step was never complete. That is what makes "kill a worker
+at any point and ask what Nexus knows happened" answerable: the event/state
+foundation from Phase 0 finally gets exercised by real execution.
+
+**Phase 3.1 acceptance:** *A tool/model step is observable in the event log
+before it is complete — and a step that never returns is observably incomplete.*
+
 ### Phase 4 — Surface
 API (REST + WebSocket), dashboard (run view, trace tree, approval queue, *Why*
 panel), CLI. The dashboard is driven directly off the decision objects.
@@ -295,6 +320,7 @@ Decisions whose wrong interpretation could cause regressions. Not a changelog.
 - **AD-006** — Store lifecycle: ingestion supersedes, never deletes; last-write-wins per identity; idempotent re-add; metadata is not identity.
 - **AD-007** — Memory is the sequence plane, separate from knowledge: a finished run projects into an Episode deterministically (no LLM); outcome derives from events.
 - **AD-008** — The reranker is internal to a Retriever implementation, never part of the Retriever contract (`search(query, filters) -> RetrievalResult`).
+- **AD-009** — Every externally observable execution step emits an event *before* it is considered complete (`*.requested` first, `*.completed` only on return); a step that never returns is observably incomplete.
 
 ## Contract conformance: MUST MATCH vs MAY DIFFER
 
@@ -362,6 +388,7 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 | Ingestion is idempotent (ingest x3 = one logical chunk) | `tests/golden/test_phase2_idempotency.py` |
 | Memory is the sequence plane (deterministic run→episode projection, no LLM) | `tests/golden/test_phase2_memory.py` |
 | Hybrid retrieval is an implementation detail (one contract, reranker internal) | `tests/golden/test_phase2_hybrid.py` |
+| Execution steps emit an event before completion (requested first, completed only on return) | `tests/golden/test_phase3_executor.py` |
 | Router never bypasses policy | `tests/golden/test_phase1_composition.py` |
 | State is recoverable (a projection of events) | `tests/golden/test_phase0_foundation.py` |
 | The boring event envelope (one uniform shape) | enforced by the `Event` dataclass itself |

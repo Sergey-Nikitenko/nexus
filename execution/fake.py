@@ -1,0 +1,36 @@
+"""The deterministic reference Executor — proves execution semantics before any
+real side effect (subprocess, network, model SDK) exists.
+
+Decision != Action: this is the Action half of the boundary. It is deliberately
+boring and side-effect-free so the semantics are testable without a provider.
+A real executor (MCP tools, subprocesses, model SDKs) is a later adapter behind
+the same Executor protocol — the caller never knows which produced the result.
+"""
+from __future__ import annotations
+
+from core.contracts import ModelRequest, ModelResponse, ToolCall, ToolResult
+
+
+class FakeExecutor:
+    """Deterministic, in-memory, side-effect-free Executor — the reference.
+
+    - execute_tool: succeeds and echoes the call's arguments.
+    - run_model: returns a fixed, echo-able response keyed off the last message.
+
+    Same input always yields the same result — that determinism is what lets a
+    golden test pin the execution semantics before any provider exists.
+    """
+
+    def execute_tool(self, call: ToolCall) -> ToolResult:
+        return ToolResult(tool_call=call, success=True, output={"echo": dict(call.arguments)})
+
+    def run_model(self, request: ModelRequest) -> ModelResponse:
+        last = request.messages[-1]["content"] if request.messages else ""
+        return ModelResponse(
+            model="fake",
+            content=f"echo: {last}",
+            tokens_in=len(last.split()),
+            tokens_out=2,
+            latency_ms=0,
+            cost=0.0,
+        )

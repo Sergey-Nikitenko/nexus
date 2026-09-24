@@ -19,6 +19,8 @@ class EventType(str):
     STEP_COMPLETED = "step.completed"
     STEP_FAILED = "step.failed"
     MODEL_SELECTED = "model.selected"
+    MODEL_REQUESTED = "model.requested"
+    MODEL_COMPLETED = "model.completed"
     RETRIEVAL_COMPLETED = "retrieval.completed"
     TOOL_REQUESTED = "tool.requested"
     TOOL_COMPLETED = "tool.completed"

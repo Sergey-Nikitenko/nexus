@@ -1,7 +1,6 @@
-"""Run every golden task + the layer-boundary gate in one shot.
-
-Discovers tests/golden/test_*.py automatically, so new phase tests are picked
-up with no edit here.
+"""Run every golden task (behavioral) + every conformance test (architectural)
+in one shot. Discovers tests/golden/test_*.py and tests/conformance/test_*.py
+automatically, so new tests are picked up with no edit here.
 
 Usage:  py scripts/check.py
 """
@@ -10,7 +9,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-TESTS = sorted((ROOT / "tests" / "golden").glob("test_*.py"))
+TEST_DIRS = (ROOT / "tests" / "golden", ROOT / "tests" / "conformance")
+TESTS = sorted(p for d in TEST_DIRS for p in d.glob("test_*.py"))
 
 
 def main() -> int:
@@ -33,7 +33,7 @@ def main() -> int:
     if failures:
         print(f"FAIL: {len(failures)}/{len(TESTS)} failed -> {', '.join(failures)}")
         return 1
-    print(f"PASS: all {len(TESTS)} golden tasks + layer gate hold.")
+    print(f"PASS: all {len(TESTS)} tests (golden + conformance) hold.")
     return 0
 
 

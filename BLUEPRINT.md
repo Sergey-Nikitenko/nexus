@@ -175,3 +175,21 @@ nexus/
 
 The separation that matters: **contracts, control, knowledge, execution,
 integrations** — not a flat pile of files.
+
+## Architecture conformance — principles → their enforcing tests
+
+Every architectural principle has a test that makes violating it a failing build.
+The suite answers two questions: *"does Nexus work?"* (golden tasks) and
+*"does Nexus still conform to the architecture?"* (conformance tests).
+
+| Principle | Enforcing test |
+|---|---|
+| Core is dependency-light (stdlib only) | `tests/conformance/test_layer_boundaries.py` |
+| Nothing imports upward (control/execution → core only) | `tests/conformance/test_layer_boundaries.py` |
+| Control plane is pure (decides, never executes/emits) | `tests/conformance/test_control_plane_purity.py` |
+| Router never bypasses policy | `tests/golden/test_phase1_composition.py` |
+| State is recoverable (a projection of events) | `tests/golden/test_phase0_foundation.py` |
+| The boring event envelope (one uniform shape) | enforced by the `Event` dataclass itself |
+
+As each phase ships, its architectural principles get added here with their test.
+A principle without a test is not a principle — it is an intention.

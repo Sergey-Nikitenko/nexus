@@ -151,6 +151,32 @@ orchestrator.* That is the victory — not "Chroma works." The stdlib
 implementation (`knowledge/inmemory.py`) is **permanent** — the reference
 implementation and the fast test fixture — never disposable scaffolding.
 
+### Phase 2.5 — memory as the sequence plane
+
+Knowledge is the *content* plane (chunks of documents, identity + version);
+memory is the *sequence* plane (what did we attempt, and how did it end). The
+two are different things — "memory" is not a synonym for "vector database."
+
+A finished run is projected — deterministically, no LLM summarization yet —
+into an **Episode**:
+
+    Run + events + evaluation  ->  Episode  ->  EpisodeStore  ->  retrieve
+
+- **Episode** (`core/contracts.py`): episode_id / task_id / summary / outcome /
+  relevant_entities / timestamp / provenance. Provenance keeps the run_id and
+  the evaluation evidence, so a retrieved memory is self-describing.
+- **Extraction is deterministic**: the same run always projects to the same
+  summary / outcome / entities / provenance. episode_id and timestamp are the
+  only fresh-per-record fields.
+- **Outcome is derived from events** (run.completed → success, run.failed →
+  failed), never from the model's opinion of itself.
+- **`memory/` is a top-level package** (not under `knowledge/`): it imports core
+  only. The reference store ranks by keyword overlap — no embeddings yet; a
+  semantic-recall adapter is a later implementation behind the same contract.
+
+**Phase 2.5 acceptance:** *Memory is the sequence plane — deterministic and
+replaceable without touching the orchestrator.*
+
 ### Phase 3 — Execution plane
 The loop, with a REPLAN branch and hard budgets:
 
@@ -246,7 +272,8 @@ nexus/
   apps/        api, worker, dashboard, cli
   core/        contracts, events, state, tasks, errors, ids
   control/     router, policy, evaluator, models, tools
-  knowledge/   ingestion, parsing, chunking, embeddings, retrieval, memory
+  knowledge/   ingestion, parsing, chunking, embeddings, retrieval
+  memory/      episodes, extraction, episodic recall
   execution/   orchestrator, planning, workers, queue, verification
   integrations/ mcp, ollama, openai, github
   observability/ tracing, events, metrics

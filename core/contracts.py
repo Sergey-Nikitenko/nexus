@@ -116,6 +116,24 @@ class RetrievalResult:
 
 
 @dataclass
+class Episode:
+    """One completed run, distilled into a retrievable memory record.
+
+    Memory is the SEQUENCE plane — "what did we attempt, and how did it end" —
+    as distinct from knowledge (the CONTENT plane: chunks of documents). An
+    Episode is a deterministic projection of a run, not a raw dump of its event
+    log: a future agent retrieves it to answer "has this been tried before?"
+    """
+    episode_id: str
+    task_id: str
+    summary: str
+    outcome: str                      # "success" | "failed" | "unknown"
+    relevant_entities: list[str] = field(default_factory=list)
+    timestamp: datetime = field(default_factory=utcnow)
+    provenance: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class ModelRequest:
     messages: list[dict[str, Any]] = field(default_factory=list)
     max_tokens: int = 4096

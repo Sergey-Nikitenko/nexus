@@ -2,9 +2,9 @@
 
 Provider/implementation libraries (vector DBs, model SDKs, vendor APIs, HTTP
 clients) may appear ONLY in the adapters — knowledge/ and integrations/.
-core/, control/, execution/, observability/, apps/ must never import them,
-because they consume RetrievalResult / ModelResponse / ToolResult, not Chroma /
-OpenAI / GitHub objects.
+core/, control/, execution/, memory/, observability/, apps/ must never import
+them, because they consume RetrievalResult / ModelResponse / ToolResult /
+Episode, not Chroma / OpenAI / GitHub objects.
 
 Run:  py tests/conformance/test_no_provider_leakage.py
 """
@@ -12,7 +12,7 @@ import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-CORE_LAYERS = ("core", "control", "execution", "observability", "apps")
+CORE_LAYERS = ("core", "control", "execution", "memory", "observability", "apps")
 
 PROVIDERS = {
     "chromadb", "qdrant", "weaviate", "pinecone", "pgvector", "faiss",

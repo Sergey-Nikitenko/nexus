@@ -5,7 +5,7 @@ Rule: infrastructure conforms to contracts, never the reverse.
 - core/            imports ONLY the standard library (no project layers, no third-party).
 - control/         may import core (and itself), never execution/knowledge/etc.
 - execution/       may import core (and itself), never control.
-- knowledge/ integrations/ observability/ — same: core only.
+- knowledge/ integrations/ observability/ memory/ — same: core only.
 - apps/            the top layer, may import anything.
 
 Run:  py tests/golden/test_layer_boundaries.py
@@ -16,7 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 STDLIB = set(sys.stdlib_module_names)
-LAYERS = ("core", "control", "execution", "knowledge", "integrations", "observability", "apps")
+LAYERS = ("core", "control", "execution", "knowledge", "memory", "integrations", "observability", "apps")
 
 # What each layer may import beyond itself + the stdlib.
 ALLOWED = {
@@ -24,6 +24,7 @@ ALLOWED = {
     "control": {"core"},
     "execution": {"core"},
     "knowledge": {"core"},
+    "memory": {"core"},
     "integrations": {"core"},
     "observability": {"core"},
     "apps": set(LAYERS),

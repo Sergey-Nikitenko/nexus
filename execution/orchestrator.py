@@ -104,6 +104,12 @@ class Orchestrator:
             results = []
             waiting = False
             for call in tool_calls:
+                # Nexus owns the execution identity (AD-012's twin for calls):
+                # re-mint per ATTEMPT, so a replayed/recovered invocation can never
+                # be conflated with the first one. The provider's (or model's) own
+                # id is deliberately ignored — at-least-once means two physical side
+                # effects must show as two distinct calls in the event log.
+                call.call_id = new_id("call")
                 spec = self.tools.get(call.tool_name)
                 verdict = self.policy.decide_tool(spec)
                 # the decision is observable (with its OWN reason — the UI renders

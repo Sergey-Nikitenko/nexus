@@ -233,3 +233,18 @@ concurrency and observability risks that a demo never hits and production will.*
   `MODEL_FALLBACK` reserved for Phase 6 model selection; `STEP_FAILED` is now
   live. Test: `tests/golden/test_phase5_hardening.py`. ✅
 
+## Implementation hazards
+
+Not audit findings and not architectural decisions — concrete footguns hit while
+building, recorded so the next reader (and future me) doesn't re-trip them.
+
+- **Shared infrastructure base classes need deliberately namespaced internal
+  state.** `DurableEventBus` multiple-inherits `EventBus` and `SqliteStore`, and
+  both used `self._all` (the bus's handler list vs the store's connection list).
+  The store's `__init__` clobbered the bus's handlers, so `publish` silently
+  iterated SQLite connections as if they were event handlers — a `TypeError` that
+  only surfaced under real use, not in the layer-boundary tests. Fixed by renaming
+  the store's to `self._connections`. Rule: an infrastructure base class namespaces
+  its private attributes by its own name (`_store_*`, `_bus_*`, …) so two mixins
+  can never collide.
+

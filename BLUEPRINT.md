@@ -724,14 +724,21 @@ so 5.3 proves the two ownership transitions separately:
 
 Proven by `tests/golden/test_phase5_ownership.py`.
 
-### Phase 5.4 — per-call tool identity
+### Phase 5.4 — per-attempt tool identity
 
 `tool.requested` and `tool.completed` carried no per-call id, so two overlapping
-tool calls in one run were indistinguishable in the trace. `ToolCall` now carries
-`call_id`, threaded through `tool.requested` / `tool.completed` /
-`policy.decision`, and the trace projector pairs requested↔completed by call_id
-(falling back to tool name only for pre-5.4 logs). An interrupted call and a
-later completed call are never conflated.
+tool calls in one run were indistinguishable in the trace. `ToolCall` carries a
+Nexus-owned `call_id`, threaded through `tool.requested` / `tool.completed` /
+`policy.decision`, and the trace projector pairs requested↔completed by call_id.
+
+The identity is per **attempt**, not per proposal: the orchestrator re-mints
+`call.call_id` at execution time and deliberately ignores whatever id the
+provider/model attached (AD-012's twin for tool calls). Under at-least-once
+recovery a re-executed call is a NEW call_id — two physical side effects never
+collapse into one in the event log. Proven by
+`tests/golden/test_phase5_correlation.py`: the same tool twice in one step yields
+two distinct call_ids, and an interrupted call re-run after recovery gets a fresh
+identity.
 
 ### Phase 5.5 — event-sourced approvals
 
@@ -922,6 +929,7 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 | Hardening: per-call tool identity, event-sourced approval, terminal step semantics, atomic recovery, dead-event cleanup | `tests/golden/test_phase5_hardening.py` |
 | Per-worker connections + deliberate SQLite policy (5.2): one connection per thread, busy_timeout/WAL, concurrent independent work | `tests/golden/test_phase5_connections.py` |
 | Task ownership is atomic (5.3): claim race + recovery/claim race → exactly one owner | `tests/golden/test_phase5_ownership.py` |
+| Per-attempt tool identity (5.4): same tool twice → distinct call_ids; recovery re-run → new call_id | `tests/golden/test_phase5_correlation.py` |
 | Router never bypasses policy | `tests/golden/test_phase1_composition.py` |
 | State is recoverable (a projection of events) | `tests/golden/test_phase0_foundation.py` |
 | The boring event envelope (one uniform shape) | enforced by the `Event` dataclass itself |

@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from core.contracts import ModelResponse, Risk, Task, TaskStatus, ToolCall, new_id  # noqa: E402
 from core.events import EventType  # noqa: E402
 from core.state import RunState  # noqa: E402
+from control.evaluator import Evaluator  # noqa: E402
 from control.policy import PolicyEngine, PolicyRules  # noqa: E402
 from control.tools import ToolRegistry, ToolSpec  # noqa: E402
 from execution.fake import FakeExecutor  # noqa: E402
@@ -60,7 +61,7 @@ def build_orchestrator():
 
     policy = PolicyEngine(PolicyRules())  # read=ALLOW, write=APPROVAL_REQUIRED, destructive=DENY
     return Orchestrator(retriever=retriever, executor=FakeExecutor(model_script=script),
-                        policy=policy, tools=tools)
+                        policy=policy, tools=tools, evaluator=Evaluator())
 
 
 def main():

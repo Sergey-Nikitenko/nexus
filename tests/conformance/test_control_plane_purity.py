@@ -14,7 +14,9 @@ ROOT = Path(__file__).resolve().parents[2]
 CONTROL = ROOT / "control"
 
 BANNED_IMPORTS = {"subprocess", "requests", "urllib", "socket", "http", "aiohttp"}
-BANNED_CORE = {"core.events"}  # the control plane never publishes
+# The control plane (router/policy/evaluator) never publishes events NOR holds
+# execution state — it observes, judges, and returns contracts only.
+BANNED_CORE = {"core.events", "core.state"}
 BANNED_CALLS = {"open", "publish", "write_text", "read_text", "write_bytes", "read_bytes", "system"}
 
 

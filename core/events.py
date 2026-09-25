@@ -29,6 +29,7 @@ class EventType(str):
     APPROVAL_GRANTED = "approval.granted"
     MODEL_FALLBACK = "model.fallback"
     EVALUATION_COMPLETED = "evaluation.completed"
+    RUN_REPLANNED = "run.replanned"
     RUN_COMPLETED = "run.completed"
     RUN_FAILED = "run.failed"
 

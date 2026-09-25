@@ -16,10 +16,13 @@ class RunState:
     run: Run
     step_status: dict[str, StepStatus] = field(default_factory=dict)
     task_status: TaskStatus = TaskStatus.RUNNING
+    replan_count: int = 0
+    evaluations: list[dict] = field(default_factory=list)
 
     @classmethod
     def reconstruct(cls, run: Run, events: list[Event]) -> "RunState":
-        """Rebuild state purely from the event log."""
+        """Rebuild state purely from the event log — including the replan/
+        evaluation history, so a crashed worker recovers the same attempt trail."""
         state = cls(run=run)
         for ev in events:
             if ev.event_type in ("step.started",):
@@ -32,6 +35,14 @@ class RunState:
                 state.task_status = TaskStatus.DONE
             elif ev.event_type == "run.failed":
                 state.task_status = TaskStatus.FAILED
+            elif ev.event_type == "run.replanned":
+                state.replan_count += 1
+            elif ev.event_type == "evaluation.completed":
+                state.evaluations.append({
+                    "passed": ev.payload.get("passed"),
+                    "reason": ev.payload.get("reason"),
+                    "replan_required": ev.payload.get("replan_required"),
+                })
         return state
 
     @property

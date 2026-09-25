@@ -370,6 +370,41 @@ The first composition of everything built so far:
 complete multi-step task, emits a causally ordered trace, preserves recoverable
 state, and never performs capability work itself.*
 
+### Phase 3.5 — verification + bounded replanning (the controlled feedback loop)
+
+The loop gains a feedback branch:
+
+    plan → retrieve → act → verify
+                            ├─ PASS ──────────────► answer
+                            └─ FAIL (replan_required)
+                                    └─► run.replanned ─► act again (bounded)
+
+- **The evaluator is not another executor (AD-016).** It observes and judges —
+  `evaluator.evaluate(...) -> Evaluation` — and the orchestrator interprets the
+  verdict. The control-plane purity gate now also bans `core.state`, so the
+  evaluator can neither execute a capability nor mutate execution state.
+- **`Evaluation` carries a structured verdict:** `passed` / `reason` /
+  `replan_required` (plus the Phase 1 `checks` evidence). `reason`/`evidence`
+  are data, never an evaluator-specific object.
+- **Verification is explicit (AD-014):** `tool succeeded != task succeeded`. A
+  tool can return success while the attempt still fails the task — the two
+  propositions are decoupled, and the golden test pins it (attempt 1's tool
+  succeeds, the evaluation still FAILs).
+- **Replanning is bounded and event-sourced (AD-015):** `max_replans` is part of
+  the plan/run state; exhaustion is a terminal `FAILED` outcome, never an
+  infinite loop. Every attempt's `evaluation.completed` and every
+  `run.replanned` is an event, and `RunState.reconstruct` reproduces the exact
+  attempt/replan trail.
+- **Policy stays authoritative across replans:** each newly proposed tool
+  re-enters the same `DENY / APPROVAL_REQUIRED / ALLOW` gate; replanning changes
+  the plan, never the authority (a separate golden test proves a DESTRUCTIVE
+  tool is denied on every attempt).
+
+**Phase 3.5 acceptance:** *One deterministic task shows attempt-1 FAIL →
+replan → attempt-2 PASS → completed, while no capability bypasses the Executor,
+every proposed tool still passes policy, the replan count is bounded, all
+attempts are observable, and state reconstructed from events equals live state.*
+
 ### Phase 4 — Surface
 API (REST + WebSocket), dashboard (run view, trace tree, approval queue, *Why*
 panel), CLI. The dashboard is driven directly off the decision objects.
@@ -427,6 +462,9 @@ Decisions whose wrong interpretation could cause regressions. Not a changelog.
 - **AD-011** — The model is never the authority for executables: `ToolCall` names a logical tool, and only the execution-layer registry maps it to an executable. No arbitrary shell execution by default.
 - **AD-012** — `ModelResponse` is Nexus-shaped, not provider-shaped: the adapter translates provider → Nexus and drops provider-specific concepts (`finish_reason`, `system_fingerprint`, the `usage` dict); the caller only ever sees Nexus semantics.
 - **AD-013** — The orchestrator owns sequencing and correlation; capabilities own execution. It composes injected capabilities (retriever, executor, policy, tools, state, bus) and never performs capability work itself (no subprocess/file/network/vector-store/model-SDK/MCP).
+- **AD-014** — Verification is explicit: `tool succeeded != task succeeded`. The evaluator returns an `Evaluation` (`passed` / `reason` / `replan_required`), and the orchestrator interprets it — the evaluator never decides what happens next.
+- **AD-015** — Replanning is bounded and event-sourced: `max_replans` is run/plan state, exhaustion is a terminal outcome, and every attempt/replan is an event reconstructible into the same attempt trail.
+- **AD-016** — The evaluator observes and judges; it never executes a capability or mutates execution state (returns `Evaluation`; the orchestrator coordinates).
 
 ## Contract conformance: MUST MATCH vs MAY DIFFER
 
@@ -500,6 +538,8 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 | Model execution: provider→Nexus translation, request identity, rejection-as-failure, bounded output | `tests/golden/test_phase3_model.py` |
 | Orchestrator coordinates, never performs capability work (AST gate) | `tests/conformance/test_orchestrator_purity.py` |
 | The full deterministic loop: Task→Answer, ordered trace, recoverable state, policy authoritative | `tests/golden/test_phase3_orchestrator.py` |
+| Verification + bounded replanning: FAIL→replan→PASS, tool-success≠task-success, reconstructible attempts | `tests/golden/test_phase3_replan.py` |
+| Policy stays authoritative across replans (DENY persists on every attempt) | `tests/golden/test_phase3_replan_policy.py` |
 | Router never bypasses policy | `tests/golden/test_phase1_composition.py` |
 | State is recoverable (a projection of events) | `tests/golden/test_phase0_foundation.py` |
 | The boring event envelope (one uniform shape) | enforced by the `Event` dataclass itself |

@@ -2,18 +2,22 @@
 
 The orchestrator OWNS sequencing and correlation; the capabilities OWN
 execution. It may call `retriever.search(...)`, `executor.run_model(...)`,
-`executor.execute_tool(...)`, `policy.decide_tool(...)`, `state` and `emit(...)`
-— but it NEVER does capability work itself: no subprocess, no file I/O, no
-network, no vector store, no model SDK, no MCP client. That boundary is enforced
-by tests/conformance/test_orchestrator_purity.py.
+`executor.execute_tool(...)`, `policy.decide_tool(...)`, `evaluator.evaluate(...)`,
+`state` and `emit(...)` — but it NEVER does capability work itself: no subprocess,
+no file I/O, no network, no vector store, no model SDK, no MCP client. That
+boundary is enforced by tests/conformance/test_orchestrator_purity.py.
 
-The deterministic loop (3.4 — no replanning/retries/verification yet):
+The loop (3.5 — verification + bounded replanning):
 
-    Task -> plan -> retrieve -> model -> [tool (policy-gated)] -> model -> verify -> answer
+    plan -> retrieve -> act -> verify
+                            ├─ PASS ──────────────► answer
+                            └─ FAIL (replan_required)
+                                    └─► run.replanned ─► act again (bounded)
 
 A model may SUGGEST a tool call (ModelResponse.tool_calls). The orchestrator
 DECIDES whether and when to invoke it, and the Phase 1 policy stays
-authoritative: DENY / APPROVAL_REQUIRED / ALLOW, never "the model said so".
+authoritative on every attempt — replanning changes the plan, never the authority.
+The evaluator observes and judges; the orchestrator interprets the verdict.
 """
 from __future__ import annotations
 
@@ -40,21 +44,22 @@ class Outcome:
 
 
 class Orchestrator:
-    """Composes injected capabilities behind one deterministic loop."""
+    """Composes injected capabilities behind one deterministic, bounded loop."""
 
-    def __init__(self, *, retriever, executor, policy, tools, bus=None) -> None:
+    def __init__(self, *, retriever, executor, policy, tools, evaluator,
+                 bus=None, max_replans: int = 2) -> None:
         self.retriever = retriever      # .search(query, filters, k) -> RetrievalResult
         self.executor = executor        # raw capability (FakeExecutor, subprocess, ...)
         self.policy = policy            # PolicyEngine (tool gating)
         self.tools = tools              # control ToolRegistry (name -> ToolSpec, for risk)
+        self.evaluator = evaluator      # .evaluate(...) -> Evaluation (judges, never executes)
         self.bus = bus or EventBus()
+        self.max_replans = max_replans
 
     def run(self, task: Task) -> Outcome:
         run = Run(run_id=new_id("run"), task_id=task.task_id)
         state = RunState(run=run)
         trace = Trace(run_id=run.run_id)
-        # the executor is instrumented with THIS run's identity, so tool/model
-        # events correlate to the same run/step (AD-009).
         instr = InstrumentedExecutor(
             self.executor, self.bus, run_id=run.run_id, task_id=task.task_id)
 
@@ -76,7 +81,7 @@ class Orchestrator:
             emit(EventType.STEP_COMPLETED, "success", {"step_id": s.step_id, "name": name})
             return result
 
-        def build_request(extra_messages=None) -> ModelRequest:
+        def build_request(retrieved, extra_messages=None) -> ModelRequest:
             messages = [
                 {"role": "system", "content": "\n".join(c.text for c in retrieved.chunks)},
                 {"role": "user", "content": task.title},
@@ -87,7 +92,7 @@ class Orchestrator:
         def run_tools(tool_calls) -> list:
             results = []
             for call in tool_calls:
-                spec = self.tools.get(call.tool_name)  # unknown tool -> KeyError -> deny
+                spec = self.tools.get(call.tool_name)
                 verdict = self.policy.decide_tool(spec)
                 if verdict == PolicyVerdict.ALLOW:
                     result = instr.execute_tool(call)
@@ -103,10 +108,15 @@ class Orchestrator:
                                         "verdict": "deny"})
             return results
 
-        emit(EventType.RUN_STARTED, "success", {})
-
-        plan = ["retrieve", "model", "tool", "verify"]
-        step("plan", lambda: trace.nodes.append({"type": "plan", "steps": list(plan)}))
+        def verify(tool_results, attempt):
+            evaluation = self.evaluator.evaluate(tool_results=tool_results)
+            payload = {"passed": evaluation.passed, "reason": evaluation.reason,
+                       "replan_required": evaluation.replan_required}
+            emit(EventType.EVALUATION_COMPLETED, "success", {**payload, "attempt": attempt})
+            state.evaluations.append(payload)
+            trace.nodes.append({"type": "verify", "passed": evaluation.passed,
+                                "reason": evaluation.reason, "attempt": attempt})
+            return evaluation
 
         def do_retrieve():
             emit(EventType.RETRIEVAL_REQUESTED, "running", {"query": task.title})
@@ -115,34 +125,51 @@ class Orchestrator:
             trace.nodes.append({"type": "retrieve", "chunks": len(result.chunks)})
             return result
 
-        retrieved = step("retrieve", do_retrieve)
-
-        def do_model():
-            resp = instr.run_model(build_request())
-            trace.nodes.append({"type": "model", "tool_calls": len(resp.tool_calls)})
+        def do_model(retrieved, extra_messages=None, final=False):
+            resp = instr.run_model(build_request(retrieved, extra_messages))
+            trace.nodes.append({"type": "model", "tool_calls": len(resp.tool_calls),
+                                "final": final})
             return resp
 
-        response = step("model", do_model)
+        emit(EventType.RUN_STARTED, "success", {})
+        step("plan", lambda: trace.nodes.append({
+            "type": "plan", "steps": ["retrieve", "act", "verify", "replan"],
+            "max_replans": self.max_replans,
+        }))
 
-        if response.tool_calls:
-            def do_tools():
-                results = run_tools(response.tool_calls)
-                return results
+        answer = ""
+        attempt = 0
+        while True:
+            attempt += 1
+            retrieved = step("retrieve", do_retrieve)
+            response = step("model", lambda: do_model(retrieved))
+            tool_results = []
+            if response.tool_calls:
+                tool_results = step("tool", lambda: run_tools(response.tool_calls))
+                response = step("model", lambda: do_model(
+                    retrieved,
+                    [{"role": "tool", "content": f"{len(tool_results)} tool result(s)"}],
+                    final=True))
 
-            tool_results = step("tool", do_tools)
+            evaluation = step("verify", lambda: verify(tool_results, attempt))
 
-            def do_final_model():
-                resp = instr.run_model(build_request([
-                    {"role": "tool", "content": f"{len(tool_results)} tool result(s)"},
-                ]))
-                trace.nodes.append({"type": "model", "final": True})
-                return resp
+            if evaluation.passed:
+                answer = response.content
+                break
 
-            response = step("model", do_final_model)
+            if evaluation.replan_required and state.replan_count < self.max_replans:
+                state.replan_count += 1
+                emit(EventType.RUN_REPLANNED, "running", {"attempt": attempt + 1})
+                trace.nodes.append({"type": "replan", "attempt": attempt + 1})
+                continue
 
-        step("verify", lambda: trace.nodes.append({"type": "verify", "passed": True}))
+            # terminal failure: replan not requested, or budget exhausted
+            state.task_status = TaskStatus.FAILED
+            emit(EventType.RUN_FAILED, "failed", {"reason": evaluation.reason})
+            trace.nodes.append({"type": "answer", "answer": ""})
+            return Outcome(answer="", run=run, trace=trace, live_state=state,
+                           events=list(self.bus.history))
 
-        answer = response.content
         trace.nodes.append({"type": "answer", "answer": answer})
         state.task_status = TaskStatus.DONE
         emit(EventType.RUN_COMPLETED, "success", {"answer": answer})

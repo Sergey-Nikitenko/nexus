@@ -181,7 +181,15 @@ class ApprovalRequest:
 
 @dataclass
 class Evaluation:
+    """A verification outcome — evidence, not an evaluator-specific object.
+
+    `passed` / `reason` / `replan_required` are the structured verdict the
+    orchestrator interprets; `checks` is the raw evidence (Phase 1). The
+    evaluator OBSERVES and JUDGES; the orchestrator DECIDES what happens next."""
     checks: dict[str, Any] = field(default_factory=dict)
+    passed: bool = True
+    reason: str = ""
+    replan_required: bool = False
 
 
 @dataclass

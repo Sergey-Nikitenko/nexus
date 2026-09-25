@@ -460,6 +460,36 @@ knowledge, and duplicate-delivery semantics are explicit.*
 lost — durable evidence identifies it, the queue recovers it, a fresh worker
 finishes it, and the event log reconstructs the recovered state.*
 
+### Phase 3.8 — MCP as another tool transport (implementation #3)
+
+    ToolCall -> Executor -> (Subprocess adapter | MCP adapter) -> ToolResult
+
+- **The adapter owns MCP's vocabulary (AD-020).** `integrations/mcp.py` speaks
+  JSON-RPC 2.0 over stdio (`initialize` / `tools/list` / `tools/call`) and
+  translates: `tools/list` → `ToolDefinition` (a Nexus contract), `tools/call`
+  result → `ToolResult`. Nothing MCP-shaped crosses the boundary — the
+  provider-specific envelope (`isError`, `content` blocks, `_meta`,
+  `structuredContent`) is dropped.
+- **MCP failures follow AD-010:** an MCP `isError` result is an expected failure
+  (`ToolResult(success=False, …)`); transport/config/launch failure raises. No
+  third category is invented.
+- **Instrumentation is universal:** the MCP adapter runs through the same
+  `InstrumentedExecutor`, so `tool.requested → MCP call → tool.completed` holds,
+  and a transport exception leaves an observably incomplete step.
+- **Policy stays above MCP:** the path is model → ToolCall → policy → Executor →
+  MCP, never model → MCP client → tool. The golden test proves a DENIED tool
+  never reaches the MCP server.
+- **No MCP imports above the adapter:** `mcp` is now in the provider-leakage
+  gate, confined to `integrations/`.
+- **Progression complete:** FakeExecutor → SubprocessToolExecutor →
+  McpToolExecutor — three implementations, one contract. The end-to-end golden
+  task runs the unchanged Orchestrator with the MCP executor, then with the fake
+  executor: the only thing that changes is dependency injection.
+
+**Phase 3.8 acceptance:** *an MCP-backed tool executes inside the unchanged
+orchestrator; discovery yields Nexus contracts, failures follow AD-010, policy
+gates every call, and nothing provider-shaped leaks above the adapter.*
+
 ### Phase 4 — Surface
 API (REST + WebSocket), dashboard (run view, trace tree, approval queue, *Why*
 panel), CLI. The dashboard is driven directly off the decision objects.
@@ -523,6 +553,7 @@ Decisions whose wrong interpretation could cause regressions. Not a changelog.
 - **AD-017** — Task ownership is a durable event (`task.claimed` with `worker_id`), never an in-memory flag; the event/state log is the source of truth for the task lifecycle (`queued → claimed → completed/failed`).
 - **AD-018** — Task delivery is at-least-once, never exactly-once; duplicate tool execution after recovery is explicit and observable, and idempotency/recovery is applied where required (as with stable chunk ids).
 - **AD-019** — Recovery is a lease rule on durable evidence (`CLAIMED` + expired `claimed_at` → recoverable), and it lives in queue infrastructure — never the orchestrator, which has no idea whether it is running normally or after a previous worker died.
+- **AD-020** — MCP is implementation #N: the adapter owns MCP's vocabulary (JSON-RPC, `tools/list`, `tools/call`); `ToolCall`/`ToolResult`/`ToolDefinition` stay Nexus contracts, and MCP libraries are confined to the integration layer.
 
 ## Contract conformance: MUST MATCH vs MAY DIFFER
 
@@ -601,6 +632,8 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 | The worker has no provider/retrieval knowledge (only composes queue + orchestrator) | `tests/conformance/test_worker_purity.py` |
 | Durable task execution: ownership/completion durable + observable, state reconstructible from the log | `tests/golden/test_phase3_worker.py` |
 | Crash recovery under real process death (two failure points, lease-based requeue, reconstruct) | `tests/golden/test_phase3_recovery.py` |
+| MCP adapter boundary: only Nexus contracts cross (provider-specific fields dropped, AD-010) | `tests/conformance/test_mcp_boundary.py` |
+| MCP end-to-end: unchanged orchestrator, policy above MCP, DI-only swap | `tests/golden/test_phase3_mcp.py` |
 | Router never bypasses policy | `tests/golden/test_phase1_composition.py` |
 | State is recoverable (a projection of events) | `tests/golden/test_phase0_foundation.py` |
 | The boring event envelope (one uniform shape) | enforced by the `Event` dataclass itself |

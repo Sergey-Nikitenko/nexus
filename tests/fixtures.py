@@ -114,3 +114,71 @@ def run_worker_from_env():
         evaluator=Evaluator(), bus=bus)
     Worker(worker_id=os.environ["WORKER_ID"], queue=queue,
            orchestrator=orchestrator).run_one()
+
+
+def fake_mcp_server_argv() -> list[str]:
+    """The argv for a deterministic, disk-less fake MCP server (stdio JSON-RPC).
+
+    Self-contained: embeds the repo/tests paths so the subprocess can import
+    `fixtures` regardless of the caller's PYTHONPATH."""
+    tests_dir = os.path.dirname(os.path.abspath(__file__))
+    root_dir = os.path.dirname(tests_dir)
+    code = ("import sys;"
+            f"sys.path.insert(0,{tests_dir!r});"
+            f"sys.path.insert(0,{root_dir!r});"
+            "from fixtures import run_fake_mcp_server;run_fake_mcp_server()")
+    return [sys.executable, "-c", code]
+
+
+def run_fake_mcp_server():
+    """A fake MCP server over stdio (JSON-RPC 2.0). Exposes two tools:
+
+    - github.read_file  -> isError=False, text result (+ provider-specific
+                           `structuredContent`/`_server_session` that Nexus must drop).
+    - github.force_push -> isError=True (an expected tool failure).
+
+    Each `tools/call` is appended to CALL_LOG_PATH (if set) so a test can prove
+    policy kept a DENIED tool away from the server.
+    """
+    import json
+    import os
+    import sys
+
+    log_path = os.environ.get("CALL_LOG_PATH")
+
+    def log(name):
+        if log_path:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(name + "\n")
+
+    def reply(mid, result):
+        sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": mid, "result": result}) + "\n")
+        sys.stdout.flush()
+
+    for line in sys.stdin:
+        req = json.loads(line)
+        mid = req.get("id")
+        method = req.get("method")
+        if method == "initialize":
+            reply(mid, {"protocolVersion": "2024-11-05",
+                        "serverInfo": {"name": "fake-mcp-server", "version": "1.0"},
+                        "capabilities": {}})
+        elif method == "tools/list":
+            reply(mid, {"tools": [
+                {"name": "github.read_file", "description": "read a file",
+                 "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}}},
+                {"name": "github.force_push", "description": "force push",
+                 "inputSchema": {"type": "object"}},
+            ]})
+        elif method == "tools/call":
+            params = req.get("params", {})
+            name = params.get("name")
+            args = params.get("arguments", {})
+            log(name)
+            if name == "github.force_push":
+                reply(mid, {"content": [{"type": "text", "text": "force push rejected"}],
+                            "isError": True, "_meta": {"session": "abc"}})
+            else:
+                reply(mid, {"content": [{"type": "text", "text": "read " + str(args.get("path", ""))}],
+                            "isError": False, "structuredContent": {"lines": 10},
+                            "_server_session": "xyz"})

@@ -107,6 +107,15 @@ class ToolResult:
 
 
 @dataclass
+class ToolDefinition:
+    """A discovered tool's Nexus-level definition — what an adapter produces and
+    the registry consumes. Carries no provider objects (no MCP/OpenAI shapes)."""
+    name: str
+    description: str = ""
+    input_schema: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class RetrievedChunk:
     """A retrieved chunk with full provenance, so a consumer never reaches back
     into the vector store to answer "where did this come from?"."""

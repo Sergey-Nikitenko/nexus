@@ -17,7 +17,7 @@ CORE_LAYERS = ("core", "control", "execution", "memory", "observability", "apps"
 PROVIDERS = {
     "chromadb", "qdrant", "weaviate", "pinecone", "pgvector", "faiss",
     "openai", "anthropic", "ollama", "github", "gitlab", "slack", "google",
-    "requests", "httpx", "aiohttp",
+    "requests", "httpx", "aiohttp", "mcp",
 }
 
 

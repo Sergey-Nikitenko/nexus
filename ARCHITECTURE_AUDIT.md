@@ -110,38 +110,46 @@ reproduces the graph from events alone (resolved, #4).
 
 ## 4. Concurrency
 
-**SQLite facts:** each store (queue, approvals, durable events) is a separate
-file; all connect with `check_same_thread=False`. That flag allows cross-thread
-use but does **not** add thread-safety — a single connection must not be written
-by two threads at once.
+**SQLite facts (resolved in 5.2):** each store (queue, approvals, durable events)
+is a separate file. Each worker thread opens its OWN connection (thread-local,
+owned by the store — `execution/sqlite.py`), configured deliberately:
+`busy_timeout`, `journal_mode=WAL`, `synchronous=NORMAL`, `foreign_keys=ON`.
+`check_same_thread=False` remains only so `close()` can close connections opened
+in (now-exited) worker threads — no connection is ever shared by two threads.
 
-**What Nexus guarantees:**
-- Claim is atomic: `claim()` is one `UPDATE … WHERE task_id = (SELECT …) RETURNING`.
-  Two workers on *separate* connections cannot claim the same task (SQLite
-  serializes writers).
+**What Nexus guarantees (5.2):**
+- **Per-worker connections** — no shared SQLite connection across workers; the
+  store owns the connection lifecycle, the worker thread never touches it.
+- **Atomic claim** — `claim()` is one `UPDATE … WHERE task_id = (SELECT …)
+  RETURNING`; two workers cannot claim the same task.
+- **Atomic recovery** — `recover_abandoned` is one conditional `UPDATE …
+  RETURNING`; two recoverers cannot both requeue the same task.
+- **Explicit loser** — the loser of any exclusive transition gets `None` (an
+  inspectable result), never an exception or a silent overwrite.
+- **Deliberate SQLite** — `busy_timeout` + WAL, so concurrent writers wait instead
+  of failing and readers never block the writer.
 
-**What Nexus does NOT guarantee (the risk list):**
+**Concurrency risk list (audit → Phase 5 resolutions):**
 
 1. **Approval consumption races with resume** — ✅ resolved (5.1). `consume_approved`
    is now one conditional `UPDATE … WHERE status='approved'` gated by row count,
    so exactly one worker executes.
-2. **Double recovery** — ✅ resolved (5.6). `recover_abandoned` is now one atomic
+2. **Double recovery** — ✅ resolved (5.7). `recover_abandoned` is now one atomic
    conditional `UPDATE … RETURNING`; two recoverers cannot both requeue the same
    task (only one row is returned).
-3. **Same-connection multi-thread writes.** With `check_same_thread=False`, two
-   threads writing one connection corrupt it. Today the worker is single-threaded
-   (tests are sequential processes), so this is latent, not exercised. → Phase 5:
-   one connection per thread, or a write lock, or serialize through a single
-   writer.
+3. **Same-connection multi-thread writes** — ✅ resolved (5.2). Each worker thread
+   now gets its own connection (thread-local, store-owned); no connection is ever
+   written by two threads. Proven by `test_phase5_connections.py`.
 4. **WebSocket teardown race.** `unsubscribe_all` during a publish can deliver
    one stray event to a just-disconnected subscriber. Harmless (bounded queue,
    downstream-only), but note it.
 5. **No duplicate-event guard beyond the event_id PK.** `INSERT OR REPLACE` is
    idempotent per event_id; ids are UUIDs, so collisions are negligible.
 
-**Bottom line:** Nexus is correct today under *sequential* processes (the
-recovery test). It is **not** yet safe under concurrent workers. Phase 5 must
-decide: single-writer serialization, per-thread connections, or a real store.
+**Bottom line:** Nexus is now correct under *concurrent* workers: each worker
+writes through its own connection, exclusive transitions are single conditional
+statements the database arbitrates, and SQLite is configured to wait rather than
+fail. The remaining notes (#4, #5) are observational, not correctness risks.
 
 ---
 
@@ -183,12 +191,12 @@ backward-compatible; renaming/removing one breaks reconstruction of old logs.
 | # | Finding | Severity | Resolution |
 |---|---|---|---|
 | 1 | `find_approved` + `consume` not atomic | high | ✅ 5.1 — conditional UPDATE + rowcount |
-| 2 | same-connection multi-thread writes unsafe | high | open — 5.2 serialize writes / per-thread conns |
-| 3 | `tool.*` events lack a per-call id | medium | ✅ 5.3 — `call_id` on ToolCall |
-| 4 | approval state not event-sourced | medium | ✅ 5.4 — `ApprovalState.reconstruct` |
-| 5 | `step.failed` never emitted | medium | ✅ 5.5 — emit on exception |
-| 6 | double-recovery double-`requeued` event | low | ✅ 5.6 — atomic requeue (conditional UPDATE) |
-| 7 | 4 dead event types | low | ✅ 5.7 — remove/reserve dead types |
+| 2 | same-connection multi-thread writes unsafe | high | ✅ 5.2 — one connection per worker thread |
+| 3 | `tool.*` events lack a per-call id | medium | ✅ 5.4 — `call_id` on ToolCall |
+| 4 | approval state not event-sourced | medium | ✅ 5.5 — `ApprovalState.reconstruct` |
+| 5 | `step.failed` never emitted | medium | ✅ 5.6 — emit on exception |
+| 6 | double-recovery double-`requeued` event | low | ✅ 5.7 — atomic requeue (conditional UPDATE) |
+| 7 | 4 dead event types | low | ✅ 5.8 — remove/reserve dead types |
 
 *No finding is an architectural regression — every boundary held. These are the
 concurrency and observability risks that a demo never hits and production will.*
@@ -199,25 +207,29 @@ concurrency and observability risks that a demo never hits and production will.*
   `UPDATE … WHERE status='approved'` gated by row count; the orchestrator executes
   only on a win. Test: `tests/golden/test_phase5_concurrency.py` (two workers race,
   exactly one executes). ✅
-- **#3 per-call tool identity (5.3)** — `ToolCall.call_id` threaded through
+- **#2 per-worker connections (5.2)** — each worker thread opens its own SQLite
+  connection (thread-local, store-owned; `execution/sqlite.py`); SQLite is
+  configured deliberately (`busy_timeout`, WAL, `synchronous=NORMAL`,
+  `foreign_keys=ON`); concurrent independent transitions succeed. Tests:
+  `tests/golden/test_phase5_connections.py` (connection policy) and
+  `tests/golden/test_phase5_ownership.py` (5.3: claim race + recovery/claim race
+  → exactly one owner). ✅
+- **#3 per-call tool identity (5.4)** — `ToolCall.call_id` threaded through
   `tool.requested` / `tool.completed` / `policy.decision`; the trace projector
   pairs by call_id, so an interrupted call and a later completed call are never
   conflated. Test: `tests/golden/test_phase5_hardening.py`. ✅
-- **#4 event-sourced approvals (5.4)** — `ApprovalState.reconstruct(approval_id,
+- **#4 event-sourced approvals (5.5)** — `ApprovalState.reconstruct(approval_id,
   events)` reproduces the approval lifecycle from events alone; the projection is
   the source of truth, not a separate table read. Test:
   `tests/golden/test_phase5_hardening.py`. ✅
-- **#5 terminal step semantics (5.5)** — a raising step now emits `step.failed`
+- **#5 terminal step semantics (5.6)** — a raising step now emits `step.failed`
   and marks the step FAILED before re-raising; process death still leaves no
   terminal event (that is how an interruption is detected). Test:
   `tests/golden/test_phase5_hardening.py`. ✅
-- **#6 atomic recovery (5.6)** — `recover_abandoned` is one atomic conditional
+- **#6 atomic recovery (5.7)** — `recover_abandoned` is one atomic conditional
   `UPDATE … RETURNING`; two recoverers cannot both requeue the same task. Test:
   `tests/golden/test_phase5_hardening.py`. ✅
-- **#7 taxonomy cleanup (5.7)** — `TASK_CREATED` removed; `MODEL_SELECTED` /
+- **#7 taxonomy cleanup (5.8)** — `TASK_CREATED` removed; `MODEL_SELECTED` /
   `MODEL_FALLBACK` reserved for Phase 6 model selection; `STEP_FAILED` is now
   live. Test: `tests/golden/test_phase5_hardening.py`. ✅
-
-*#2 (same-connection multi-thread writes) remains open — it is the 5.2 SQLite
-concurrency policy, not part of this batch.*
 

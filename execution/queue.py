@@ -15,29 +15,34 @@ knowledge of why the worker disappeared.
 Delivery is AT-LEAST-ONCE, by design: a task claimed by a worker that dies
 before completing stays CLAIMED (recoverable), and re-running may execute a tool
 twice. That is explicit and observable, never silently promised away.
+
+**Concurrency (AD-027).** The queue is safe under concurrent workers: each worker
+thread gets its OWN connection (see `execution/sqlite.SqliteStore`), and every
+exclusive transition — `claim` and `recover_abandoned` — is ONE conditional
+UPDATE. The database arbitrates the race; the loser gets `None` (explicit), never
+an exception or a silent overwrite. There is no Python-side check-then-act.
 """
 from __future__ import annotations
 
-import sqlite3
 from datetime import timedelta
 
 from core.contracts import Event, Task, TaskStatus, new_id, utcnow
 from core.events import EventType
+from execution.sqlite import SqliteStore
 
 
-class TaskQueue:
+class TaskQueue(SqliteStore):
     """A SQLite-backed task queue with durable lifecycle events."""
 
     def __init__(self, path: str, bus=None) -> None:
-        # check_same_thread=False: the HTTP surface may enqueue/claim from a
-        # threadpool thread different from the one that constructed the runtime.
-        self._conn = sqlite3.connect(path, check_same_thread=False)
-        self._conn.execute(
+        self._bus = bus
+        super().__init__(path)
+
+    def _schema(self, conn) -> None:
+        conn.execute(
             "CREATE TABLE IF NOT EXISTS tasks ("
             "task_id TEXT PRIMARY KEY, title TEXT, status TEXT, worker_id TEXT, "
             "claimed_at TEXT, answer TEXT, error TEXT)")
-        self._conn.commit()
-        self._bus = bus
 
     def _emit(self, event_type: str, task: Task, payload: dict | None = None) -> None:
         if self._bus is None:
@@ -49,23 +54,26 @@ class TaskQueue:
         ))
 
     def enqueue(self, task: Task) -> None:
-        self._conn.execute("INSERT OR IGNORE INTO tasks VALUES (?,?,?,?,?,?,?)",
-                           (task.task_id, task.title, TaskStatus.QUEUED.value,
-                            None, None, None, None))
-        self._conn.commit()
+        conn = self._conn()
+        conn.execute("INSERT OR IGNORE INTO tasks VALUES (?,?,?,?,?,?,?)",
+                     (task.task_id, task.title, TaskStatus.QUEUED.value,
+                      None, None, None, None))
+        conn.commit()
         self._emit(EventType.TASK_QUEUED, task)
 
     def claim(self, worker_id: str) -> Task | None:
         """Atomically claim the oldest QUEUED task (single UPDATE ... RETURNING),
-        stamping the lease (`claimed_at`)."""
+        stamping the lease (`claimed_at`). The loser of a concurrent claim gets
+        an explicit None, never an exception."""
         claimed_at = utcnow().isoformat()
-        row = self._conn.execute(
+        conn = self._conn()
+        row = conn.execute(
             "UPDATE tasks SET status=?, worker_id=?, claimed_at=? WHERE task_id = "
             "(SELECT task_id FROM tasks WHERE status=? ORDER BY rowid LIMIT 1) "
             "RETURNING task_id, title",
             (TaskStatus.CLAIMED.value, worker_id, claimed_at, TaskStatus.QUEUED.value),
         ).fetchone()
-        self._conn.commit()
+        conn.commit()
         if row is None:
             return None
         task = Task(task_id=row[0], title=row[1], status=TaskStatus.CLAIMED)
@@ -82,52 +90,62 @@ class TaskQueue:
         injectable so tests can control the clock."""
         now = now or utcnow()
         cutoff = (now - timedelta(seconds=lease_seconds)).isoformat()
-        rows = self._conn.execute(
+        conn = self._conn()
+        rows = conn.execute(
             "UPDATE tasks SET status=?, worker_id=NULL, claimed_at=NULL "
             "WHERE status=? AND claimed_at IS NOT NULL AND claimed_at < ? "
             "RETURNING task_id",
             (TaskStatus.QUEUED.value, TaskStatus.CLAIMED.value, cutoff),
         ).fetchall()
-        self._conn.commit()
+        conn.commit()
         recovered = [r[0] for r in rows]
         for task_id in recovered:
             self._emit(EventType.TASK_REQUEUED, self.get(task_id))
         return recovered
 
     def complete(self, task_id: str, answer: str) -> None:
-        self._conn.execute("UPDATE tasks SET status=?, answer=? WHERE task_id=?",
-                           (TaskStatus.DONE.value, answer, task_id))
-        self._conn.commit()
+        conn = self._conn()
+        conn.execute("UPDATE tasks SET status=?, answer=? WHERE task_id=?",
+                     (TaskStatus.DONE.value, answer, task_id))
+        conn.commit()
         self._emit(EventType.TASK_COMPLETED, self.get(task_id), {"answer": answer})
 
     def fail(self, task_id: str, error: str) -> None:
-        self._conn.execute("UPDATE tasks SET status=?, error=? WHERE task_id=?",
-                           (TaskStatus.FAILED.value, error, task_id))
-        self._conn.commit()
+        conn = self._conn()
+        conn.execute("UPDATE tasks SET status=?, error=? WHERE task_id=?",
+                     (TaskStatus.FAILED.value, error, task_id))
+        conn.commit()
         self._emit(EventType.TASK_FAILED, self.get(task_id), {"error": error})
 
     def wait(self, task_id: str) -> None:
         """A task pauses for human approval (durable state transition)."""
-        self._conn.execute("UPDATE tasks SET status=? WHERE task_id=?",
-                           (TaskStatus.AWAITING_APPROVAL.value, task_id))
-        self._conn.commit()
+        conn = self._conn()
+        conn.execute("UPDATE tasks SET status=? WHERE task_id=?",
+                     (TaskStatus.AWAITING_APPROVAL.value, task_id))
+        conn.commit()
         self._emit(EventType.TASK_WAITING, self.get(task_id))
 
     def requeue(self, task_id: str) -> None:
         """An approved task becomes runnable again (durable state transition)."""
-        self._conn.execute(
+        conn = self._conn()
+        conn.execute(
             "UPDATE tasks SET status=?, worker_id=NULL, claimed_at=NULL WHERE task_id=?",
             (TaskStatus.QUEUED.value, task_id))
-        self._conn.commit()
+        conn.commit()
         self._emit(EventType.TASK_REQUEUED, self.get(task_id))
 
     def get(self, task_id: str) -> Task | None:
-        row = self._conn.execute(
+        conn = self._conn()
+        row = conn.execute(
             "SELECT task_id, title, status FROM tasks WHERE task_id=?",
             (task_id,)).fetchone()
         if row is None:
             return None
         return Task(task_id=row[0], title=row[1], status=TaskStatus(row[2]))
 
-    def close(self) -> None:
-        self._conn.close()
+    def owner(self, task_id: str) -> str | None:
+        """The worker_id currently owning a task (None if not claimed)."""
+        conn = self._conn()
+        row = conn.execute(
+            "SELECT worker_id FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+        return None if row is None else row[0]

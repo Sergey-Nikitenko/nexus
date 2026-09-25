@@ -697,48 +697,66 @@ every other gets 0 and must not execute. Proven by
 `tests/golden/test_phase5_concurrency.py`, which races two workers (separate
 connections) and asserts exactly one execution.
 
-### Phase 5.2 — SQLite concurrency policy (deferred)
+### Phase 5.2 — SQLite concurrency policy
 
-Finding #2 — a single connection written from two threads with
-`check_same_thread=False` is unsafe — is the one high finding this batch does not
-close. It is its own milestone: one connection per thread, or a write lock, or
-serialization through a single writer. Not yet implemented; the 5.1/5.6
-guarantees hold because workers and tests use separate connections and the
-queue/store writes are single-statement and atomic.
+Finding #2: a single connection written from two threads
+(`check_same_thread=False` on one shared connection) is unsafe. Nexus now gives
+each worker thread its OWN connection — thread-local, owned by the store component
+(`execution/sqlite.py`), never by the worker thread. SQLite is configured
+deliberately: `busy_timeout` (a writer waits, it does not fail),
+`journal_mode=WAL` (one writer + many readers), `synchronous=NORMAL`,
+`foreign_keys=ON`. `check_same_thread=False` remains only so `close()` can close
+connections opened in now-exited worker threads; no connection is ever shared.
+Every exclusive transition stays a single conditional statement — the database
+arbitrates, never Python check-then-act. Proven by
+`tests/golden/test_phase5_connections.py`.
 
-### Phase 5.3 — per-call tool identity
+### Phase 5.3 — task ownership atomicity
+
+Approval consumption being atomic (5.1) does NOT prove task ownership is atomic,
+so 5.3 proves the two ownership transitions separately:
+
+- **claim race** — two workers race `claim` (`UPDATE … WHERE status = QUEUED`) on
+  one task: exactly one CLAIMED, the loser gets an explicit `None`.
+- **recovery/claim race** — a recoverer (`recover_abandoned`) and a worker
+  (`claim`) race over an abandoned task: exactly one owner, never two, never a
+  silent overwrite.
+
+Proven by `tests/golden/test_phase5_ownership.py`.
+
+### Phase 5.4 — per-call tool identity
 
 `tool.requested` and `tool.completed` carried no per-call id, so two overlapping
 tool calls in one run were indistinguishable in the trace. `ToolCall` now carries
 `call_id`, threaded through `tool.requested` / `tool.completed` /
 `policy.decision`, and the trace projector pairs requested↔completed by call_id
-(falling back to tool name only for pre-5.3 logs). An interrupted call and a
+(falling back to tool name only for pre-5.4 logs). An interrupted call and a
 later completed call are never conflated.
 
-### Phase 5.4 — event-sourced approvals
+### Phase 5.5 — event-sourced approvals
 
 Approval status lived only in the SQLite table. `ApprovalState.reconstruct`
 (approval_id, events) now reproduces the lifecycle (pending → approved/denied →
 consumed) from events alone — the same "state is a projection of events"
 discipline already held by `RunState` and `TaskState`.
 
-### Phase 5.5 — terminal step semantics
+### Phase 5.6 — terminal step semantics
 
 A step that raised an exception left no `step.failed` event. The orchestrator now
 catches, emits `step.failed`, marks the step FAILED, then re-raises. Process death
 still leaves no terminal event — that is exactly how an interruption is detected.
 
-### Phase 5.6 — atomic recovery
+### Phase 5.7 — atomic recovery
 
 `recover_abandoned` previously SELECTed expired tasks then UPDATEed each, so two
 recoverers could both requeue the same task (double `task.requeued`). It is now
 one atomic conditional `UPDATE … WHERE status='claimed' AND claimed_at < ?
 RETURNING task_id`: exactly one recoverer gets the row.
 
-### Phase 5.7 — event taxonomy cleanup
+### Phase 5.8 — event taxonomy cleanup
 
 Removed the dead `TASK_CREATED` type; reserved `MODEL_SELECTED` and
-`MODEL_FALLBACK` for Phase 6 model selection; `STEP_FAILED` is now live (5.5).
+`MODEL_FALLBACK` for Phase 6 model selection; `STEP_FAILED` is now live (5.6).
 The taxonomy is back to "every type is either emitted or explicitly reserved."
 
 Findings #3–#7 are proven together by `tests/golden/test_phase5_hardening.py`.
@@ -809,6 +827,7 @@ Decisions whose wrong interpretation could cause regressions. Not a changelog.
 - **AD-024** — The WebSocket subscribes to the event bus (never the orchestrator), replays durable history then tails live events filtered by run_id at the edge, uses a bounded per-client queue (disconnect-on-overflow), and is purely downstream — removing every client never changes execution or the event log.
 - **AD-025** — Approval is a durable task-state transition, not an HTTP callback: the approval is single-use and bound to a specific proposal (task/run/tool/risk), the policy is re-checked on resume (approval never bypasses it), and the surface commands Nexus (requeues) without ever executing the tool.
 - **AD-026** — The dashboard is a disposable presentation layer over Nexus projections: it renders state (decisions, attempts, recovery, interruption) without reconstructing authority, carries no business logic, and can request approval via the API but never execute a capability or become an independent source of truth.
+- **AD-027** — Concurrency is a store contract, not a worker concern: each worker thread gets its own SQLite connection (thread-local, store-owned); SQLite is configured deliberately (`busy_timeout`, WAL, `synchronous=NORMAL`, `foreign_keys=ON`); and every exclusive transition (claim, consume, recover) is ONE conditional UPDATE the database arbitrates — the loser gets an explicit `None`, never an exception or silent overwrite. SQLite is the reference implementation; the store's method surface is the provider-neutral contract.
 
 ## Contract conformance: MUST MATCH vs MAY DIFFER
 
@@ -901,6 +920,8 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 | CLI: thin surface adapter — same async ask + same projected views as REST/WS/dashboard | `tests/golden/test_phase4_cli.py` |
 | Atomic approval consumption: two workers race, exactly one executes (single-use) | `tests/golden/test_phase5_concurrency.py` |
 | Hardening: per-call tool identity, event-sourced approval, terminal step semantics, atomic recovery, dead-event cleanup | `tests/golden/test_phase5_hardening.py` |
+| Per-worker connections + deliberate SQLite policy (5.2): one connection per thread, busy_timeout/WAL, concurrent independent work | `tests/golden/test_phase5_connections.py` |
+| Task ownership is atomic (5.3): claim race + recovery/claim race → exactly one owner | `tests/golden/test_phase5_ownership.py` |
 | Router never bypasses policy | `tests/golden/test_phase1_composition.py` |
 | State is recoverable (a projection of events) | `tests/golden/test_phase0_foundation.py` |
 | The boring event envelope (one uniform shape) | enforced by the `Event` dataclass itself |

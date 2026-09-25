@@ -85,5 +85,5 @@ class NexusRuntime:
             return None
         approval = self.approvals.deny(approval_id)
         if approval is not None:
-            self.queue.fail(approval.task_id, "approval denied")
+            self.queue.fail_waiting(approval.task_id, "approval denied")
         return approval

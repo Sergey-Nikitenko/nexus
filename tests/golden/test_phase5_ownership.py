@@ -62,7 +62,7 @@ def main():
     check(not errors, "no exception during the claim race")
     check(len(got) == 1, "exactly one worker CLAIMED the task")
     check(claims.count(None) == 1, "the loser got an explicit None (not an exception)")
-    check(got[0].task_id == task.task_id and got[0].status == TaskStatus.CLAIMED,
+    check(got[0].task.task_id == task.task_id and got[0].task.status == TaskStatus.CLAIMED,
           "the winner owns exactly the task it claimed")
     check(q.owner(task.task_id) in ("w0", "w1"),
           "the task has exactly one owner (a single worker_id)")
@@ -108,7 +108,7 @@ def main():
     owner = q2.owner(task2.task_id)
     status = q2.get(task2.task_id).status
     if claimed[0] is not None:
-        check(claimed[0].task_id == task2.task_id and owner == "w2"
+        check(claimed[0].task.task_id == task2.task_id and owner == "w2"
               and status == TaskStatus.CLAIMED,
               "claimer won -> exactly one owner (w2)")
     else:

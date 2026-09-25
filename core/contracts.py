@@ -67,6 +67,20 @@ class Task:
 
 
 @dataclass
+class Claim:
+    """A worker's exclusive lease on ONE claim-generation of a task.
+
+    Ownership is generation-specific, not merely worker-specific (AD-028): a
+    worker may legitimately re-claim a later generation, so a terminal transition
+    must prove it holds the exact (worker_id, generation) it acquired — not just
+    that it is "some worker" named by worker_id.
+    """
+    task: Task
+    worker_id: str
+    generation: int
+
+
+@dataclass
 class Step:
     step_id: str
     name: str

@@ -768,6 +768,18 @@ The taxonomy is back to "every type is either emitted or explicitly reserved."
 
 Findings #3–#7 are proven together by `tests/golden/test_phase5_hardening.py`.
 
+### Phase 5.9 — stale-owner isolation (A2-1)
+
+Audit #2 flagged the last concurrency hole: terminal transitions identified the
+task but did not prove the caller still owned the claim. Now `claim` mints a
+`claim_generation`, and `complete`/`fail` are conditional on the exact
+(worker_id, generation) the worker acquired. A stale worker whose lease expired
+and whose task was re-claimed gets `False` back — harmless even if it stays
+alive. Proven by `tests/golden/test_phase5_stale_owner.py` (stale completion AND
+stale failure).
+
+**Phase 5 is frozen** — 5.1–5.9, full-stack concurrency, two audits, 46 tests.
+
 ### Phase 5 (continued) — Hardening
 - **Secrets:** never enter prompts, traces, or model-visible logs.
 - **Tool execution:** timeouts, resource limits, filesystem boundaries,
@@ -836,6 +848,7 @@ Decisions whose wrong interpretation could cause regressions. Not a changelog.
 - **AD-025** — Approval is a durable task-state transition, not an HTTP callback: the approval is single-use and bound to a specific proposal (task/run/tool/risk), the policy is re-checked on resume (approval never bypasses it), and the surface commands Nexus (requeues) without ever executing the tool.
 - **AD-026** — The dashboard is a disposable presentation layer over Nexus projections: it renders state (decisions, attempts, recovery, interruption) without reconstructing authority, carries no business logic, and can request approval via the API but never execute a capability or become an independent source of truth.
 - **AD-027** — Concurrency is a store contract, not a worker concern: each worker thread gets its own SQLite connection (thread-local, store-owned); SQLite is configured deliberately (`busy_timeout`, WAL, `synchronous=NORMAL`, `foreign_keys=ON`); and every exclusive transition (claim, consume, recover) is ONE conditional UPDATE the database arbitrates — the loser gets an explicit `None`, never an exception or silent overwrite. SQLite is the reference implementation; the store's method surface is the provider-neutral contract.
+- **AD-028** — Ownership is generation-specific, not merely worker-specific: `claim` mints a fresh `claim_generation`, and terminal transitions (`complete`/`fail`) are conditional on the exact (worker_id, generation) the worker acquired. A stale worker whose lease expired is harmless — its completion/failure is a no-op (`False`), never an overwrite of the re-claimed owner.
 
 ## Contract conformance: MUST MATCH vs MAY DIFFER
 
@@ -932,6 +945,7 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 | Task ownership is atomic (5.3): claim race + recovery/claim race → exactly one owner | `tests/golden/test_phase5_ownership.py` |
 | Per-attempt tool identity (5.4): same tool twice → distinct call_ids; recovery re-run → new call_id | `tests/golden/test_phase5_correlation.py` |
 | Full-stack concurrency: N workers drain READ/WRITE/BOOM tasks end-to-end — correct terminal states, per-attempt identity, clean partition | `tests/golden/test_phase5_system.py` |
+| Stale-owner isolation (A2-1): a stale worker's completion/failure is a no-op; only the current claim generation may transition | `tests/golden/test_phase5_stale_owner.py` |
 | Router never bypasses policy | `tests/golden/test_phase1_composition.py` |
 | State is recoverable (a projection of events) | `tests/golden/test_phase0_foundation.py` |
 | The boring event envelope (one uniform shape) | enforced by the `Event` dataclass itself |

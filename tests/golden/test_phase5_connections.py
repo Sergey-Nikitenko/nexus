@@ -85,11 +85,11 @@ def main():
 
     def worker(name):
         try:
-            task = q2.claim(name)
-            if task is not None:
-                q2.complete(task.task_id, f"done-by-{name}")
+            claim = q2.claim(name)
+            if claim is not None:
+                q2.complete(claim, f"done-by-{name}")
                 with lock:
-                    claimed[name] = task.task_id
+                    claimed[name] = claim.task.task_id
         except Exception as exc:  # noqa: BLE001
             with lock:
                 errors.append(exc)

@@ -268,11 +268,9 @@ documented non-guarantee — never an assertion.
 3. **Can recovery race with normal execution?** — **No, at the transition.**
    Recovery (CLAIMED→QUEUED) and claim (QUEUED→CLAIMED) target disjoint statuses
    and are each one conditional UPDATE; exactly one owner results. Proven:
-   `test_phase5_ownership.py` (recovery/claim race). *Residual (A2-1, below):*
-   terminal transitions `complete`/`fail` are unconditional (`WHERE task_id=?`, no
-   owner guard), so a stale-but-alive worker whose lease expired could overwrite a
-   re-claimed task's completion. Unreachable under process-death recovery (the
-   stale worker is dead); reachable under Phase 6 multi-worker.
+   `test_phase5_ownership.py` (recovery/claim race). Terminal transitions are now
+   generation-guarded (A2-1, resolved below): a stale worker's completion/failure
+   is a no-op, so recovery can never be overwritten by a late owner.
 
 4. **Can every physical capability attempt be uniquely correlated?** — **Yes.** The
    orchestrator re-mints `call.call_id` per execution attempt, ignoring the
@@ -311,10 +309,12 @@ documented non-guarantee — never an assertion.
 
 **Findings (audit #2):**
 
-- **A2-1 (low, defer to Phase 6)** — terminal transitions are not owner-guarded. A
-  stale worker can overwrite a re-claimed task's `complete`/`fail`. Not reachable
-  in the process-death recovery model (the stale worker is killed); reachable under
-  slow-alive multi-worker. Fix: `UPDATE … WHERE task_id=? AND worker_id=?`.
+- **A2-1 (resolved, 5.9)** — terminal transitions are now generation-guarded. A
+  `claim` mints a fresh `claim_generation`; `complete`/`fail` are conditional
+  `UPDATE … WHERE task_id=? AND status='claimed' AND worker_id=? AND
+  claim_generation=?`, so only the (worker_id, generation) the worker actually
+  acquired may transition the task. A stale owner gets `False` (a no-op), never an
+  overwrite. Test: `test_phase5_stale_owner.py`.
 
 **Notes (not defects):**
 
@@ -325,7 +325,11 @@ documented non-guarantee — never an assertion.
   surface commands on the same approval would last-write-wins. Low severity (humans
   don't race the same approval); a status-guarded transition would tighten it.
 
-**Verdict:** Phase 5 concurrency mechanics are sound — all ten questions answer as
-above, and the one residual (A2-1) is a Phase 6 multi-worker concern, not a Phase 5
-regression. Phase 5 has earned its "production substrate" claim.
+**Resolution (A2-1):** *Before* — stale workers were assumed dead before
+reclamation; *After* — stale workers are harmless even if they remain alive. A
+worker may only complete/fail the claim generation it currently owns
+(`test_phase5_stale_owner.py`).
+
+**Verdict:** all ten questions answer as above, and A2-1 is now closed. **Phase 5
+is frozen**: 5.1–5.9 + full-stack concurrency + two audits, 46 tests.
 

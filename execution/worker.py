@@ -8,6 +8,11 @@ tests/conformance/test_worker_purity.py).
 Delivery is AT-LEAST-ONCE: if the worker dies between `claim` and `complete`,
 the task stays CLAIMED (durable) and is recoverable; a tool may execute twice.
 That is explicit, never hidden.
+
+**Ownership (AD-028).** A terminal transition (`complete`/`fail`) must present the
+exact `Claim` (worker_id + generation) the worker acquired. A stale worker whose
+lease expired and whose task was re-claimed simply gets `False` back — its
+completion/failure is a no-op, so it can never overwrite the new owner.
 """
 from __future__ import annotations
 
@@ -24,19 +29,20 @@ class Worker:
         """Claim one task and run it. Returns the outcome, or None if the queue
         is empty. A failure is recorded durably before the exception propagates,
         so a task is never silently lost."""
-        task = self.queue.claim(self.worker_id)
-        if task is None:
+        claim = self.queue.claim(self.worker_id)
+        if claim is None:
             return None
+        task = claim.task
         try:
             outcome = self.orchestrator.run(task)
         except Exception as exc:
-            self.queue.fail(task.task_id, f"worker error: {exc}")
+            self.queue.fail(claim, f"worker error: {exc}")
             raise
         if outcome.waiting:
             # durable pause: the task waits for human approval, not lost/failed
             self.queue.wait(task.task_id)
         elif outcome.live_state.task_status == TaskStatus.DONE:
-            self.queue.complete(task.task_id, outcome.answer)
+            self.queue.complete(claim, outcome.answer)
         else:
-            self.queue.fail(task.task_id, "run failed")
+            self.queue.fail(claim, "run failed")
         return outcome

@@ -97,12 +97,20 @@ class Orchestrator:
             for call in tool_calls:
                 spec = self.tools.get(call.tool_name)
                 verdict = self.policy.decide_tool(spec)
-                # the decision is observable: proposed -> evaluated -> executed/not
+                # the decision is observable (with its OWN reason — the UI renders
+                # this, it never recomputes policy semantics)
+                reason = {
+                    PolicyVerdict.ALLOW: f"Policy allows a {spec.risk.value} operation",
+                    PolicyVerdict.DENY: f"Policy rejects a {spec.risk.value} operation",
+                    PolicyVerdict.APPROVAL_REQUIRED:
+                        f"Policy requires approval for a {spec.risk.value} operation",
+                }[verdict]
                 emit(EventType.POLICY_DECISION, "success", {
                     "tool": call.tool_name,
                     "verdict": verdict.value,
                     "risk": spec.risk.value,
                     "executed": verdict == PolicyVerdict.ALLOW,
+                    "reason": reason,
                 })
                 if verdict == PolicyVerdict.ALLOW:
                     result = instr.execute_tool(call)

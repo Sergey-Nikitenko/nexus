@@ -39,6 +39,7 @@ class TraceProjector:
             "parent_event_id": e.parent_event_id,
             "run_id": e.run_id,
             "task_id": e.task_id,
+            "timestamp": e.timestamp.isoformat(),
         }
 
     def _project(self, e, completed_by_tool) -> dict | None:
@@ -70,7 +71,7 @@ class TraceProjector:
         if t == EventType.POLICY_DECISION:
             return {**base, "type": "decision", "tool": p.get("tool"),
                     "verdict": p.get("verdict"), "risk": p.get("risk"),
-                    "executed": p.get("executed")}
+                    "executed": p.get("executed"), "reason": p.get("reason", "")}
         if t == EventType.APPROVAL_REQUIRED:
             return {**base, "type": "approval", "tool": p.get("tool")}
         if t == EventType.TOOL_REQUESTED:

@@ -631,6 +631,31 @@ policy-governed; a worker can die, the runtime restart, and the browser
 disconnect while a task waits — and the resumed execution still runs the tool
 only if both a granted approval AND the current policy allow it.*
 
+### Phase 4.6 — the dashboard (disposable presentation)
+
+    Dashboard -> HTTP + WebSocket -> apps/ surface -> trace projection + approval API -> durable events
+
+- **The dashboard is a projection consumer, not a Nexus component (AD-026).**
+  `apps/dashboard.py` maps the projected `core.Trace` into a view model — status,
+  milestones, attempts, decisions, recovery, interruptions — with no business
+  logic. It renders state; it never reconstructs authority.
+- **The Why panel consumes the decision, never recomputes it:** every
+  `policy.decision` event now carries its own `reason`, so the UI shows
+  `risk / verdict / executed / reason` verbatim — no `if risk == ...` on the UI.
+- **Replan, recovery, and interruption are all visible** from the event semantics
+  (attempt numbers, `task_claimed → task_requeued`, `interrupted` tools).
+- **Event identity is an advanced detail:** every decision node exposes
+  `event_id` / `parent_event_id` / `run_id` / `task_id` / `timestamp` for the
+  details drawer — "click the event, here is the exact durable event."
+- **Disposable by construction:** the dashboard imports only the projected
+  contract; deleting it leaves the API, CLI, WebSocket, runtime, workers,
+  events, state, and recovery intact (`test_surface_boundary.py` is the guardrail).
+
+**Phase 4.6 acceptance:** *the dashboard is a disposable presentation layer over
+Nexus's durable event and state projections — it can observe, display, and
+request human authorization, but cannot execute capabilities or become an
+independent source of truth.*
+
 ### Phase 5 — Hardening
 - **Secrets:** never enter prompts, traces, or model-visible logs.
 - **Tool execution:** timeouts, resource limits, filesystem boundaries,
@@ -696,6 +721,7 @@ Decisions whose wrong interpretation could cause regressions. Not a changelog.
 - **AD-023** — The trace is a read-side projection of the event stream: events stay the source of truth, the projector is deterministic and non-mutating, decisions (`policy.decision`) are observable, and incomplete/recovery transitions remain visible — observability consumes core only, never execution/providers/HTTP.
 - **AD-024** — The WebSocket subscribes to the event bus (never the orchestrator), replays durable history then tails live events filtered by run_id at the edge, uses a bounded per-client queue (disconnect-on-overflow), and is purely downstream — removing every client never changes execution or the event log.
 - **AD-025** — Approval is a durable task-state transition, not an HTTP callback: the approval is single-use and bound to a specific proposal (task/run/tool/risk), the policy is re-checked on resume (approval never bypasses it), and the surface commands Nexus (requeues) without ever executing the tool.
+- **AD-026** — The dashboard is a disposable presentation layer over Nexus projections: it renders state (decisions, attempts, recovery, interruption) without reconstructing authority, carries no business logic, and can request approval via the API but never execute a capability or become an independent source of truth.
 
 ## Contract conformance: MUST MATCH vs MAY DIFFER
 
@@ -784,6 +810,7 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 | Trace projector: deterministic, decisions/replans/incomplete/recovery visible | `tests/golden/test_phase4_trace.py` |
 | WebSocket: replay + live tail, run_id filter, downstream (no execution/event-log effect) | `tests/golden/test_phase4_ws.py` |
 | Approval lifecycle: durable waiting, single-use, task-bound, policy re-checked, downstream purity | `tests/golden/test_phase4_approval.py` |
+| Dashboard: disposable projection consumer — decisions/attempts/recovery/interruption, no authority | `tests/golden/test_phase4_dashboard.py` |
 | Router never bypasses policy | `tests/golden/test_phase1_composition.py` |
 | State is recoverable (a projection of events) | `tests/golden/test_phase0_foundation.py` |
 | The boring event envelope (one uniform shape) | enforced by the `Event` dataclass itself |

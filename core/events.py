@@ -30,6 +30,7 @@ class EventType(str):
     RETRIEVAL_COMPLETED = "retrieval.completed"
     TOOL_REQUESTED = "tool.requested"
     TOOL_COMPLETED = "tool.completed"
+    POLICY_DECISION = "policy.decision"
     APPROVAL_REQUIRED = "approval.required"
     APPROVAL_GRANTED = "approval.granted"
     MODEL_FALLBACK = "model.fallback"

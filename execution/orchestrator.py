@@ -94,6 +94,13 @@ class Orchestrator:
             for call in tool_calls:
                 spec = self.tools.get(call.tool_name)
                 verdict = self.policy.decide_tool(spec)
+                # the decision is observable: proposed -> evaluated -> executed/not
+                emit(EventType.POLICY_DECISION, "success", {
+                    "tool": call.tool_name,
+                    "verdict": verdict.value,
+                    "risk": spec.risk.value,
+                    "executed": verdict == PolicyVerdict.ALLOW,
+                })
                 if verdict == PolicyVerdict.ALLOW:
                     result = instr.execute_tool(call)
                     trace.nodes.append({"type": "tool", "tool": call.tool_name,

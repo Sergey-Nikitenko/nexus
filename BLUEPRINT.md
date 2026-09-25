@@ -550,6 +550,34 @@ asynchronously, reports durable task state and event history, survives a runtime
 restart, has explicit missing-resource semantics, and leaks no HTTP type below
 the surface.*
 
+### Phase 4.3 — trace projection (one interpretation of a run)
+
+    Durable events -> TraceProjector -> core.Trace -> HTTP / WebSocket / CLI / dashboard
+
+- **The trace is a read-side projection, not a second source of truth (AD-023).**
+  `observability/trace.py` derives the existing `core.Trace` from events —
+  deterministically, without modifying the events, and without a `DashboardTrace`.
+- **Decisions are observable:** the orchestrator now emits a `policy.decision`
+  event (`verdict` / `risk` / `executed`) for every tool proposal, so the
+  projector distinguishes *proposed → evaluated → allowed → executed → completed*
+  from "tool happened" — the future Why panel's raw material.
+- **Causality + replans survive:** every node keeps `event_id` +
+  `parent_event_id`; `evaluation.completed` and `run.replanned` carry an
+  `attempt`, so a FAIL→REPLAN→PASS history projects as two distinct attempts with
+  no dashboard-specific logic.
+- **Incomplete and recovery transitions stay visible:** `tool.requested` with no
+  `tool.completed` projects as `interrupted` (never a manufactured success);
+  `task.claimed → task.requeued → task.claimed → task.completed` projects the
+  worker-recovery story directly from the event semantics.
+- **The projector is pure** — it imports only `core.contracts` + `core.events`
+  (enforced by `tests/conformance/test_trace_projection_purity.py`), so
+  observability stays genuinely downstream of execution.
+
+**Phase 4.3 acceptance:** *the event stream remains the source of truth; the
+projector reproduces the same trace deterministically, preserves causality and
+decisions, shows replans as attempts, leaves incomplete operations incomplete,
+makes recovery visible, and has no execution/provider/HTTP dependency.*
+
 ### Phase 5 — Hardening
 - **Secrets:** never enter prompts, traces, or model-visible logs.
 - **Tool execution:** timeouts, resource limits, filesystem boundaries,
@@ -612,6 +640,7 @@ Decisions whose wrong interpretation could cause regressions. Not a changelog.
 - **AD-020** — MCP is implementation #N: the adapter owns MCP's vocabulary (JSON-RPC, `tools/list`, `tools/call`); `ToolCall`/`ToolResult`/`ToolDefinition` stay Nexus contracts, and MCP libraries are confined to the integration layer.
 - **AD-021** — Applications compose Nexus; Nexus components do not discover each other through global state. The surface observes and commands through contracts/events, and execution never depends on the surface.
 - **AD-022** — The HTTP layer is an edge adapter: FastAPI/Pydantic stop at apps/; Nexus contracts are serialized at the edge (never HTTP request models propagating inward), and task ID vs run ID stay distinct (`/tasks/{id}` lifecycle, `/traces/{run_id}` history).
+- **AD-023** — The trace is a read-side projection of the event stream: events stay the source of truth, the projector is deterministic and non-mutating, decisions (`policy.decision`) are observable, and incomplete/recovery transitions remain visible — observability consumes core only, never execution/providers/HTTP.
 
 ## Contract conformance: MUST MATCH vs MAY DIFFER
 
@@ -696,6 +725,8 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 | Runtime composition: applications compose Nexus, no global-state discovery, uniform surface | `tests/golden/test_phase4_runtime.py` |
 | HTTP/framework types stop at the surface (nothing below apps/ imports them) | `tests/conformance/test_http_boundary.py` |
 | Thin HTTP adapter: async /ask, durable task status, event history, restart-safe, explicit 4xx | `tests/golden/test_phase4_api.py` |
+| Trace projection is pure (no execution/provider/HTTP deps) | `tests/conformance/test_trace_projection_purity.py` |
+| Trace projector: deterministic, decisions/replans/incomplete/recovery visible | `tests/golden/test_phase4_trace.py` |
 | Router never bypasses policy | `tests/golden/test_phase1_composition.py` |
 | State is recoverable (a projection of events) | `tests/golden/test_phase0_foundation.py` |
 | The boring event envelope (one uniform shape) | enforced by the `Event` dataclass itself |

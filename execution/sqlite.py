@@ -46,6 +46,8 @@ from __future__ import annotations
 import sqlite3
 import threading
 
+from execution.schema import SCHEMA_VERSION, read_version, stamp_version
+
 
 def sqlite_connect(path: str) -> sqlite3.Connection:
     """Open ONE connection with Nexus's deliberate SQLite policy.
@@ -77,11 +79,24 @@ class SqliteStore:
         self._lock = threading.Lock()
         self._closed = False
         conn = self._conn()
-        self._schema(conn)
+        version = read_version(conn)
+        if version > SCHEMA_VERSION:
+            # data written by a newer build — never silently misread (schema.py).
+            raise RuntimeError(
+                f"{type(self).__name__}: on-disk schema version {version} is newer "
+                f"than this build supports (up to {SCHEMA_VERSION}); refusing to read")
+        self._schema(conn)  # CREATE TABLE IF NOT EXISTS (current shape)
+        if version < SCHEMA_VERSION:
+            self._migrate(conn, version)  # reconcile an older on-disk schema
+        stamp_version(conn, SCHEMA_VERSION)
         conn.commit()
 
     def _schema(self, conn: sqlite3.Connection) -> None:
         raise NotImplementedError
+
+    def _migrate(self, conn: sqlite3.Connection, from_version: int) -> None:
+        """Reconcile an older on-disk schema to the current one. Default: none."""
+        pass
 
     def _conn(self) -> sqlite3.Connection:
         if self._closed:

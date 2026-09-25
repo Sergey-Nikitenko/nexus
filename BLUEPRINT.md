@@ -818,17 +818,36 @@ slice prevents.
 Proven by `tests/golden/test_phase6_replay.py` (same inputs → MATCH; knowledge
 change → named difference at `retrieval.completed`).
 
+### Phase 6.2 — persisted-schema versioning
+
+The on-disk format now carries an explicit version, so "we have old data" becomes
+a deterministic answer instead of a guess. `execution/schema.py` defines
+`SCHEMA_VERSION = 1` — a number DISTINCT from contract versions and component
+identities (those answer different questions) — and stores it in SQLite's
+`PRAGMA user_version` (a header integer, no extra table).
+
+- **Compatibility rule:** read == `SCHEMA_VERSION`; migrate version 0 (the
+  pre-versioning legacy format) to current at open; reject > `SCHEMA_VERSION` (a
+  newer build's data is never silently misread) with a deterministic error.
+- **Migration is a store hook:** `SqliteStore._migrate` reconciles an older schema
+  before any read/write. The one real migration today adds the `claim_generation`
+  column to a pre-5.9 tasks table, idempotently.
+- **Non-destructive by construction:** migration is column-additive and header-only
+  — data rows are never rewritten, so event payloads (and 6.1 fingerprints /
+  manifests) are semantically unchanged.
+
+Proven by `tests/golden/test_phase6_schema.py` (migrates an actual v0 fixture,
+rejects a future version, and confirms the schema version never enters a manifest).
+
 ### Phase 6 — the rest (in order)
-1. **6.2 Persisted schema versioning** — a schema-version field, so the event log
-   becomes formal persisted data (carried from audit #2 question 7).
-2. **6.3 Reproducible run manifests / fingerprints** — the CLI/dashboard replay
+1. **6.3 Reproducible run manifests / fingerprints** — the CLI/dashboard replay
    surface ("Reproducible: YES/NO + difference"); may collapse into 6.1.
-3. **6.4 Multi-worker arbitration** — local / cloud / GPU workers behind the task
+2. **6.4 Multi-worker arbitration** — local / cloud / GPU workers behind the task
    queue (plus the A2-1 owner-guard, already landed in 5.9).
-4. **6.5 Nexus as an MCP server** — `nexus.ask`, `nexus.run_task`,
+3. **6.5 Nexus as an MCP server** — `nexus.ask`, `nexus.run_task`,
    `nexus.search_knowledge`, `nexus.get_trace`, `nexus.approve`; another agent
    drives Nexus as a service.
-5. **6.6 Multi-agent** — supervisor → research/coding/review agents on the same
+4. **6.6 Multi-agent** — supervisor → research/coding/review agents on the same
    event/state/policy infrastructure.
 
 ## Golden tasks
@@ -883,6 +902,7 @@ Decisions whose wrong interpretation could cause regressions. Not a changelog.
 - **AD-027** — Concurrency is a store contract, not a worker concern: each worker thread gets its own SQLite connection (thread-local, store-owned); SQLite is configured deliberately (`busy_timeout`, WAL, `synchronous=NORMAL`, `foreign_keys=ON`); and every exclusive transition (claim, consume, recover) is ONE conditional UPDATE the database arbitrates — the loser gets an explicit `None`, never an exception or silent overwrite. SQLite is the reference implementation; the store's method surface is the provider-neutral contract.
 - **AD-028** — Ownership is generation-specific, not merely worker-specific: `claim` mints a fresh `claim_generation`, and terminal transitions (`complete`/`fail`) are conditional on the exact (worker_id, generation) the worker acquired. A stale worker whose lease expired is harmless — its completion/failure is a no-op (`False`), never an overwrite of the re-claimed owner.
 - **AD-029** — Reproducibility is manifest + events, never events alone: a run's defining inputs (knowledge snapshot, policy, model, tools, router, replan limits) are captured in a `RunManifest` BEFORE execution; replay compares a semantic fingerprint of the event log (not raw bytes), and derives a status (REPRODUCIBLE / REPRODUCIBLE_WITH_DIFFERENCES / NON_REPRODUCIBLE) from explicit conditions, never a guess.
+- **AD-030** — Persisted data carries a schema version, distinct from contract versions and component identities: the on-disk format version lives in SQLite's `PRAGMA user_version`; a build reads the current version, migrates the legacy (v0) format at open, and rejects newer versions deterministically — never silently interpreting old or future data.
 
 ## Contract conformance: MUST MATCH vs MAY DIFFER
 
@@ -981,6 +1001,7 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 | Full-stack concurrency: N workers drain READ/WRITE/BOOM tasks end-to-end — correct terminal states, per-attempt identity, clean partition | `tests/golden/test_phase5_system.py` |
 | Stale-owner isolation (A2-1): a stale worker's completion/failure is a no-op; only the current claim generation may transition | `tests/golden/test_phase5_stale_owner.py` |
 | Run identity + deterministic replay (6.1): manifest before execution, semantic fingerprint, named input difference | `tests/golden/test_phase6_replay.py` |
+| Persisted-schema versioning (6.2): migrate legacy v0, reject future versions, schema version recorded separately | `tests/golden/test_phase6_schema.py` |
 | Router never bypasses policy | `tests/golden/test_phase1_composition.py` |
 | State is recoverable (a projection of events) | `tests/golden/test_phase0_foundation.py` |
 | The boring event envelope (one uniform shape) | enforced by the `Event` dataclass itself |

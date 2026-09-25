@@ -48,6 +48,12 @@ class TaskQueue(SqliteStore):
             "claimed_at TEXT, claim_generation INTEGER DEFAULT 0, "
             "answer TEXT, error TEXT)")
 
+    def _migrate(self, conn, from_version: int) -> None:
+        # v0 (pre-5.9) lacked claim_generation; reconcile the column idempotently.
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(tasks)")}
+        if "claim_generation" not in cols:
+            conn.execute("ALTER TABLE tasks ADD COLUMN claim_generation INTEGER DEFAULT 0")
+
     def _emit(self, event_type: str, task: Task, payload: dict | None = None) -> None:
         if self._bus is None:
             return

@@ -19,6 +19,7 @@ class EventType(str):
     TASK_REQUEUED = "task.requeued"
     TASK_COMPLETED = "task.completed"
     TASK_FAILED = "task.failed"
+    RUN_MANIFEST = "run.manifest"
     RUN_STARTED = "run.started"
     STEP_STARTED = "step.started"
     STEP_COMPLETED = "step.completed"

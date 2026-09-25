@@ -25,6 +25,8 @@ class FakeExecutor:
     golden test pin the execution semantics before any provider exists.
     """
 
+    model_identity = "fake/deterministic"  # Nexus vocabulary (RunManifest)
+
     def __init__(self, model_script: list | None = None) -> None:
         self._model_script = list(model_script or [])
 

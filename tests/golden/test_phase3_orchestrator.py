@@ -80,7 +80,9 @@ def main():
           "the trace records plan -> retrieve -> model -> tool -> verify -> answer")
 
     # 2. causally ordered events
-    check(indices(events, EventType.RUN_STARTED) == [0], "run.started is the first event")
+    check(indices(events, EventType.RUN_MANIFEST) == [0]
+          and indices(events, EventType.RUN_STARTED) == [1],
+          "run.manifest precedes run.started (inputs captured before execution)")
     check(indices(events, EventType.RUN_COMPLETED) == [len(events) - 1],
           "run.completed is the last event")
     check(indices(events, EventType.RETRIEVAL_REQUESTED)[0]

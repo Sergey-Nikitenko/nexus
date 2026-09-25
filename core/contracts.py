@@ -80,6 +80,48 @@ class Claim:
     generation: int
 
 
+class ReplayStatus(str, Enum):
+    """A run's reproducibility, DERIVED from explicit conditions — never a
+    subjective assessment (AD-029)."""
+    REPRODUCIBLE = "reproducible"
+    REPRODUCIBLE_WITH_DIFFERENCES = "reproducible_with_differences"
+    NON_REPRODUCIBLE = "non_reproducible"
+
+
+@dataclass
+class RunManifest:
+    """The inputs that define a run, captured BEFORE execution (AD-029).
+
+    The manifest answers "what configuration/snapshots defined this run?" —
+    distinct from the event log, which answers "what actually happened?". Both
+    together give reproducibility; the events alone do not. Every field is Nexus
+    vocabulary — never a provider object or SDK config.
+    """
+    run_id: str
+    task_id: str
+    task_title: str
+    knowledge: str      # knowledge snapshot identity/version
+    policy: str         # policy identity/version
+    model: str          # model identity/config (Nexus vocabulary)
+    tools: str          # tool registry identity/version
+    router: str = ""    # router configuration (reserved until model selection)
+    max_replans: int = 2
+
+
+@dataclass
+class ReplayReport:
+    """The outcome of replaying a run against its manifest.
+
+    `status` is DERIVED: REPRODUCIBLE iff the inputs match AND the semantic
+    traces match; REPRODUCIBLE_WITH_DIFFERENCES iff an input changed (or the
+    traces diverged); NON_REPRODUCIBLE iff a required input is missing.
+    """
+    status: ReplayStatus
+    input_differences: list[tuple[str, str, str]] = field(default_factory=list)
+    first_divergent_event: str | None = None
+    event_count: tuple[int, int] = (0, 0)
+
+
 @dataclass
 class Step:
     step_id: str

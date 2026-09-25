@@ -787,16 +787,49 @@ stale failure).
 - **Idempotency:** `idempotency_key` on every externally mutating operation,
   so a crash-and-retry can't create two PRs.
 
-### Phase 6 — Differentiators (in this order)
-1. **Reproducible runs** — from a `run_id`, reconstruct models, prompts,
-   retrieval, tool calls, config, decisions, events.
-2. **Multi-worker** — local / cloud / GPU workers behind the task queue
-   (plus the A2-1 owner-guard on terminal transitions, carried from audit #2).
-3. **Nexus as an MCP server** — `nexus.ask`, `nexus.run_task`,
+### Phase 6.1 — run identity + deterministic replay (reproducibility as a contract)
+
+A run is reproducible only when Nexus persisted the INPUTS that define it (the
+`RunManifest`) alongside the OUTPUTS (the event log). The manifest answers *"what
+configuration/snapshots defined this run?"*; the events answer *"what actually
+happened?"*. Events alone do NOT imply reproducibility — that's the mistake this
+slice prevents.
+
+- **`RunManifest`** (`core/contracts.py`) — task identity, knowledge snapshot,
+  policy identity/version, model identity/config, tool-registry identity, router
+  config (reserved), and replan limits. All Nexus vocabulary, never a provider
+  object or SDK config (the same AD-012 discipline, applied to configuration).
+- **Captured before execution (AD-029):** `run.manifest` is emitted before
+  `run.started`, so the defining configuration is recorded before the first
+  capability decision. Replaying "today's configuration" silently is not replay.
+- **Semantic fingerprint, not byte-identity:** `observability/replay.py` reduces a
+  run's events to a canonical projection — dropping event ids, timestamps,
+  worker/run/claim/call ids — and hashes it. **Reproducible ≠ byte-identical.**
+- **Derived replay status:** `ReplayReport` is REPRODUCIBLE (inputs match AND
+  semantic traces match), REPRODUCIBLE_WITH_DIFFERENCES (an input changed), or
+  NON_REPRODUCIBLE (a required input is missing) — never a subjective guess.
+- **Deliberate nondeterminism is visible:** a difference is reported as *which
+  input changed* (e.g. "knowledge: v1 → v2") plus the first divergent event, not
+  "the agent behaved differently."
+- **Honesty:** the reference/fake path proves true reproducibility; production
+  providers later declare their nondeterministic characteristics explicitly —
+  exactly how at-least-once delivery is honest rather than promised away.
+
+Proven by `tests/golden/test_phase6_replay.py` (same inputs → MATCH; knowledge
+change → named difference at `retrieval.completed`).
+
+### Phase 6 — the rest (in order)
+1. **6.2 Persisted schema versioning** — a schema-version field, so the event log
+   becomes formal persisted data (carried from audit #2 question 7).
+2. **6.3 Reproducible run manifests / fingerprints** — the CLI/dashboard replay
+   surface ("Reproducible: YES/NO + difference"); may collapse into 6.1.
+3. **6.4 Multi-worker arbitration** — local / cloud / GPU workers behind the task
+   queue (plus the A2-1 owner-guard, already landed in 5.9).
+4. **6.5 Nexus as an MCP server** — `nexus.ask`, `nexus.run_task`,
    `nexus.search_knowledge`, `nexus.get_trace`, `nexus.approve`; another agent
-   can drive Nexus as a service.
-4. **Multi-agent** — supervisor → research/coding/review agents, all on the
-   same event/state/policy infrastructure.
+   drives Nexus as a service.
+5. **6.6 Multi-agent** — supervisor → research/coding/review agents on the same
+   event/state/policy infrastructure.
 
 ## Golden tasks
 
@@ -849,6 +882,7 @@ Decisions whose wrong interpretation could cause regressions. Not a changelog.
 - **AD-026** — The dashboard is a disposable presentation layer over Nexus projections: it renders state (decisions, attempts, recovery, interruption) without reconstructing authority, carries no business logic, and can request approval via the API but never execute a capability or become an independent source of truth.
 - **AD-027** — Concurrency is a store contract, not a worker concern: each worker thread gets its own SQLite connection (thread-local, store-owned); SQLite is configured deliberately (`busy_timeout`, WAL, `synchronous=NORMAL`, `foreign_keys=ON`); and every exclusive transition (claim, consume, recover) is ONE conditional UPDATE the database arbitrates — the loser gets an explicit `None`, never an exception or silent overwrite. SQLite is the reference implementation; the store's method surface is the provider-neutral contract.
 - **AD-028** — Ownership is generation-specific, not merely worker-specific: `claim` mints a fresh `claim_generation`, and terminal transitions (`complete`/`fail`) are conditional on the exact (worker_id, generation) the worker acquired. A stale worker whose lease expired is harmless — its completion/failure is a no-op (`False`), never an overwrite of the re-claimed owner.
+- **AD-029** — Reproducibility is manifest + events, never events alone: a run's defining inputs (knowledge snapshot, policy, model, tools, router, replan limits) are captured in a `RunManifest` BEFORE execution; replay compares a semantic fingerprint of the event log (not raw bytes), and derives a status (REPRODUCIBLE / REPRODUCIBLE_WITH_DIFFERENCES / NON_REPRODUCIBLE) from explicit conditions, never a guess.
 
 ## Contract conformance: MUST MATCH vs MAY DIFFER
 
@@ -946,6 +980,7 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 | Per-attempt tool identity (5.4): same tool twice → distinct call_ids; recovery re-run → new call_id | `tests/golden/test_phase5_correlation.py` |
 | Full-stack concurrency: N workers drain READ/WRITE/BOOM tasks end-to-end — correct terminal states, per-attempt identity, clean partition | `tests/golden/test_phase5_system.py` |
 | Stale-owner isolation (A2-1): a stale worker's completion/failure is a no-op; only the current claim generation may transition | `tests/golden/test_phase5_stale_owner.py` |
+| Run identity + deterministic replay (6.1): manifest before execution, semantic fingerprint, named input difference | `tests/golden/test_phase6_replay.py` |
 | Router never bypasses policy | `tests/golden/test_phase1_composition.py` |
 | State is recoverable (a projection of events) | `tests/golden/test_phase0_foundation.py` |
 | The boring event envelope (one uniform shape) | enforced by the `Event` dataclass itself |

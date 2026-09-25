@@ -33,3 +33,8 @@ class ToolRegistry:
 
     def list(self) -> list[ToolSpec]:
         return list(self._tools.values())
+
+    def snapshot(self) -> str:
+        """Deterministic identity of the registry's contents (Nexus vocabulary,
+        for a RunManifest)."""
+        return ";".join(sorted(f"{s.name}({s.risk.value})" for s in self._tools.values()))

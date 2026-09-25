@@ -21,11 +21,11 @@ The evaluator observes and judges; the orchestrator interprets the verdict.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 
 from core.contracts import (
-    ApprovalRequest, Event, ModelRequest, PolicyVerdict, Run, Step, StepStatus, Task,
-    TaskStatus, Trace, new_id, utcnow,
+    ApprovalRequest, Event, ModelRequest, PolicyVerdict, Run, RunManifest, Step,
+    StepStatus, Task, TaskStatus, Trace, new_id, utcnow,
 )
 from core.events import EventBus, EventType
 from core.state import RunState
@@ -42,6 +42,7 @@ class Outcome:
     live_state: RunState
     events: list[Event] = field(default_factory=list)
     waiting: bool = False
+    manifest: RunManifest | None = None
 
 
 class Orchestrator:
@@ -193,6 +194,25 @@ class Orchestrator:
                                 "final": final})
             return resp
 
+        # The manifest captures the INPUTS that define this run BEFORE the first
+        # capability decision (AD-029): the events below record "what happened";
+        # the manifest records "what configuration defined it".
+        def _snapshot(component, fallback="unknown"):
+            fn = getattr(component, "snapshot", None)
+            return fn() if callable(fn) else fallback
+
+        manifest = RunManifest(
+            run_id=run.run_id,
+            task_id=task.task_id,
+            task_title=task.title,
+            knowledge=_snapshot(self.retriever),
+            policy=getattr(getattr(self.policy, "rules", None), "version", "policy@1"),
+            model=getattr(self.executor, "model_identity", "unknown"),
+            tools=_snapshot(self.tools),
+            router="",
+            max_replans=self.max_replans,
+        )
+        emit(EventType.RUN_MANIFEST, "success", asdict(manifest))
         emit(EventType.RUN_STARTED, "success", {})
         step("plan", lambda: trace.nodes.append({
             "type": "plan", "steps": ["retrieve", "act", "verify", "replan"],
@@ -212,7 +232,8 @@ class Orchestrator:
                     # the task pauses durably for human approval
                     trace.nodes.append({"type": "waiting"})
                     return Outcome(answer="", run=run, trace=trace, live_state=state,
-                                   events=list(self.bus.history), waiting=True)
+                                   events=list(self.bus.history), waiting=True,
+                                   manifest=manifest)
                 response = step("model", lambda: do_model(
                     retrieved,
                     [{"role": "tool", "content": f"{len(tool_results)} tool result(s)"}],
@@ -235,10 +256,10 @@ class Orchestrator:
             emit(EventType.RUN_FAILED, "failed", {"reason": evaluation.reason})
             trace.nodes.append({"type": "answer", "answer": ""})
             return Outcome(answer="", run=run, trace=trace, live_state=state,
-                           events=list(self.bus.history))
+                           events=list(self.bus.history), manifest=manifest)
 
         trace.nodes.append({"type": "answer", "answer": answer})
         state.task_status = TaskStatus.DONE
         emit(EventType.RUN_COMPLETED, "success", {"answer": answer})
         return Outcome(answer=answer, run=run, trace=trace, live_state=state,
-                       events=list(self.bus.history))
+                       events=list(self.bus.history), manifest=manifest)

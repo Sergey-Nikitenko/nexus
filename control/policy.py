@@ -16,6 +16,7 @@ from .tools import ToolSpec
 @dataclass
 class PolicyRules:
     """What the policy does per risk level, plus explicit overrides."""
+    version: str = "policy@1"
     read: PolicyVerdict = PolicyVerdict.ALLOW
     write: PolicyVerdict = PolicyVerdict.APPROVAL_REQUIRED
     destructive: PolicyVerdict = PolicyVerdict.DENY

@@ -139,6 +139,11 @@ class InMemoryKnowledgeStore:
     def current(self, identity):
         return self._current.get(identity)
 
+    def snapshot(self) -> str:
+        """Deterministic identity of the CURRENT knowledge (identity -> version)."""
+        items = sorted(f"{s}|{d}|{l}@{v}" for (s, d, l), v in self._current.items())
+        return ";".join(items)
+
 
 class ComposedRetriever:
     """Composes injectable stages (loader/parser/chunker/embedder/store) into a
@@ -179,3 +184,7 @@ class ComposedRetriever:
             for c, s in scored
         ]
         return RetrievalResult(query=query, chunks=chunks)
+
+    def snapshot(self) -> str:
+        """Deterministic identity of the current knowledge snapshot."""
+        return self.store.snapshot()

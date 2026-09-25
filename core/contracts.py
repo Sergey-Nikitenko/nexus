@@ -31,6 +31,7 @@ class StepStatus(str, Enum):
 
 class TaskStatus(str, Enum):
     QUEUED = "queued"
+    CLAIMED = "claimed"
     RUNNING = "running"
     AWAITING_APPROVAL = "awaiting_approval"
     DONE = "done"

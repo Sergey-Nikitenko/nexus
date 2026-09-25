@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .contracts import Event, Run, Step, StepStatus, TaskStatus
+from .contracts import Event, Run, Step, StepStatus, Task, TaskStatus
 
 
 @dataclass
@@ -48,3 +48,29 @@ class RunState:
     @property
     def completed_steps(self) -> list[str]:
         return [sid for sid, s in self.step_status.items() if s == StepStatus.PASS]
+
+
+@dataclass
+class TaskState:
+    """The queue/worker view of a task — a projection of task.* events.
+
+    Ownership is a durable event (`task.claimed` with a worker_id), not an
+    in-memory flag. A task whose last lifecycle event is `task.claimed` with no
+    terminal event is RECOVERABLE: another worker can observe it and re-claim it.
+    """
+    task: Task
+    status: TaskStatus = TaskStatus.QUEUED
+    worker_id: str | None = None
+
+    @classmethod
+    def reconstruct(cls, task: Task, events: list[Event]) -> "TaskState":
+        state = cls(task=task)
+        for ev in events:
+            if ev.event_type == "task.claimed":
+                state.status = TaskStatus.CLAIMED
+                state.worker_id = ev.payload.get("worker_id")
+            elif ev.event_type == "task.completed":
+                state.status = TaskStatus.DONE
+            elif ev.event_type == "task.failed":
+                state.status = TaskStatus.FAILED
+        return state

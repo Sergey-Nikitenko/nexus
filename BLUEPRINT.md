@@ -405,6 +405,34 @@ replan → attempt-2 PASS → completed, while no capability bypasses the Execut
 every proposed tool still passes policy, the replan count is bounded, all
 attempts are observable, and state reconstructed from events equals live state.*
 
+### Phase 3.6 — durable task execution (queue + worker)
+
+The execution plane gains a durable boundary between "accepted" and "run":
+
+    Task → Queue → Worker → Orchestrator → Events → State
+
+- **Ownership is a durable event (AD-017).** `TaskQueue.claim` emits
+  `task.claimed` (with `worker_id`); `enqueue` emits `task.queued`; the worker's
+  ack emits `task.completed` / `task.failed`. A worker never owns execution
+  solely in memory — a crash leaves "last durable event = X", never "the worker
+  died". `TaskState` is the projection of those `task.*` events.
+- **At-least-once, never exactly-once (AD-018).** A claimed-but-uncompleted task
+  stays `CLAIMED` and is recoverable; re-running may execute a tool twice. That
+  is explicit and observable — the same idempotency discipline the knowledge
+  store already has (stable chunk ids), applied here to delivery semantics.
+- **Queue / worker / orchestrator stay separate:** the queue does enqueue/claim/
+  ack (SQLite, atomic single-`UPDATE` claim); the worker composes queue +
+  orchestrator and knows nothing about retrieval or providers (AST-gated); the
+  orchestrator is unchanged and knows nothing about how tasks are queued.
+- **A `DurableEventBus`** persists every event to a SQLite log, so `RunState`
+  and `TaskState` reconstruct from a fresh connection — the whole event/state
+  system is now crash-surviving, not just in-memory.
+
+**Phase 3.6 acceptance:** *the queue accepts a Task, the worker claims it, runs
+the unchanged Orchestrator, ownership/completion/failure are durable and
+observable, state reconstructs from the log, the worker has no provider
+knowledge, and duplicate-delivery semantics are explicit.*
+
 ### Phase 4 — Surface
 API (REST + WebSocket), dashboard (run view, trace tree, approval queue, *Why*
 panel), CLI. The dashboard is driven directly off the decision objects.
@@ -465,6 +493,8 @@ Decisions whose wrong interpretation could cause regressions. Not a changelog.
 - **AD-014** — Verification is explicit: `tool succeeded != task succeeded`. The evaluator returns an `Evaluation` (`passed` / `reason` / `replan_required`), and the orchestrator interprets it — the evaluator never decides what happens next.
 - **AD-015** — Replanning is bounded and event-sourced: `max_replans` is run/plan state, exhaustion is a terminal outcome, and every attempt/replan is an event reconstructible into the same attempt trail.
 - **AD-016** — The evaluator observes and judges; it never executes a capability or mutates execution state (returns `Evaluation`; the orchestrator coordinates).
+- **AD-017** — Task ownership is a durable event (`task.claimed` with `worker_id`), never an in-memory flag; the event/state log is the source of truth for the task lifecycle (`queued → claimed → completed/failed`).
+- **AD-018** — Task delivery is at-least-once, never exactly-once; duplicate tool execution after recovery is explicit and observable, and idempotency/recovery is applied where required (as with stable chunk ids).
 
 ## Contract conformance: MUST MATCH vs MAY DIFFER
 
@@ -540,6 +570,8 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 | The full deterministic loop: Task→Answer, ordered trace, recoverable state, policy authoritative | `tests/golden/test_phase3_orchestrator.py` |
 | Verification + bounded replanning: FAIL→replan→PASS, tool-success≠task-success, reconstructible attempts | `tests/golden/test_phase3_replan.py` |
 | Policy stays authoritative across replans (DENY persists on every attempt) | `tests/golden/test_phase3_replan_policy.py` |
+| The worker has no provider/retrieval knowledge (only composes queue + orchestrator) | `tests/conformance/test_worker_purity.py` |
+| Durable task execution: ownership/completion durable + observable, state reconstructible from the log | `tests/golden/test_phase3_worker.py` |
 | Router never bypasses policy | `tests/golden/test_phase1_composition.py` |
 | State is recoverable (a projection of events) | `tests/golden/test_phase0_foundation.py` |
 | The boring event envelope (one uniform shape) | enforced by the `Event` dataclass itself |

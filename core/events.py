@@ -14,6 +14,10 @@ from .contracts import Event
 
 class EventType(str):
     TASK_CREATED = "task.created"
+    TASK_QUEUED = "task.queued"
+    TASK_CLAIMED = "task.claimed"
+    TASK_COMPLETED = "task.completed"
+    TASK_FAILED = "task.failed"
     RUN_STARTED = "run.started"
     STEP_STARTED = "step.started"
     STEP_COMPLETED = "step.completed"

@@ -29,7 +29,9 @@ class TaskQueue:
     """A SQLite-backed task queue with durable lifecycle events."""
 
     def __init__(self, path: str, bus=None) -> None:
-        self._conn = sqlite3.connect(path)
+        # check_same_thread=False: the HTTP surface may enqueue/claim from a
+        # threadpool thread different from the one that constructed the runtime.
+        self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS tasks ("
             "task_id TEXT PRIMARY KEY, title TEXT, status TEXT, worker_id TEXT, "

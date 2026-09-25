@@ -524,6 +524,32 @@ One root wires the real system together:
 the same application surface, with no global-state discovery, and the execution
 plane remains surface-agnostic.*
 
+### Phase 4.2 — the thin HTTP adapter (REST over the runtime)
+
+    POST /ask -> NexusRuntime.ask() -> queue -> {"task_id", "status": "queued"}
+    GET /tasks/{id} -> NexusRuntime.task() -> TaskState projection
+    GET /traces/{run_id} -> NexusRuntime.events() -> event history
+
+- **FastAPI/Pydantic stop at apps/ (AD-022).** The HTTP layer is an edge adapter:
+  it delegates to `NexusRuntime` and serializes Nexus contracts to JSON. The
+  Pydantic request model (`AskRequest`) never propagates into Nexus, and
+  `TaskState` has no Pydantic dependency. `tests/conformance/test_http_boundary.py`
+  makes any HTTP/framework import below `apps/` a failing build.
+- **`/ask` is asynchronous:** it returns `202` + `task_id` + `status=queued`
+  without running the orchestrator inline; a worker drains the queue separately.
+- **Task ID ≠ Run ID:** `/tasks/{id}` is the execution lifecycle; `/traces/{run_id}`
+  is one run/attempt's event history (matters once recovery + replanning show up).
+- **Correlation is preserved at the edge:** `X-Task-ID` on `/ask`, and every
+  trace event carries `event_id` / `run_id` / `task_id` / `parent_event_id`.
+- **Deterministic semantics:** unknown task/trace → 404, malformed request → 422.
+  `GET /traces` is observational (never mutates the event log). A restart leaves
+  the API reporting the same durable state (the endpoint keeps no in-memory dict).
+
+**Phase 4.2 acceptance:** *a thin HTTP adapter creates a durable queued task
+asynchronously, reports durable task state and event history, survives a runtime
+restart, has explicit missing-resource semantics, and leaks no HTTP type below
+the surface.*
+
 ### Phase 5 — Hardening
 - **Secrets:** never enter prompts, traces, or model-visible logs.
 - **Tool execution:** timeouts, resource limits, filesystem boundaries,
@@ -585,6 +611,7 @@ Decisions whose wrong interpretation could cause regressions. Not a changelog.
 - **AD-019** — Recovery is a lease rule on durable evidence (`CLAIMED` + expired `claimed_at` → recoverable), and it lives in queue infrastructure — never the orchestrator, which has no idea whether it is running normally or after a previous worker died.
 - **AD-020** — MCP is implementation #N: the adapter owns MCP's vocabulary (JSON-RPC, `tools/list`, `tools/call`); `ToolCall`/`ToolResult`/`ToolDefinition` stay Nexus contracts, and MCP libraries are confined to the integration layer.
 - **AD-021** — Applications compose Nexus; Nexus components do not discover each other through global state. The surface observes and commands through contracts/events, and execution never depends on the surface.
+- **AD-022** — The HTTP layer is an edge adapter: FastAPI/Pydantic stop at apps/; Nexus contracts are serialized at the edge (never HTTP request models propagating inward), and task ID vs run ID stay distinct (`/tasks/{id}` lifecycle, `/traces/{run_id}` history).
 
 ## Contract conformance: MUST MATCH vs MAY DIFFER
 
@@ -667,6 +694,8 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 | MCP end-to-end: unchanged orchestrator, policy above MCP, DI-only swap | `tests/golden/test_phase3_mcp.py` |
 | The surface is a leaf; execution never depends on it | `tests/conformance/test_surface_boundary.py` |
 | Runtime composition: applications compose Nexus, no global-state discovery, uniform surface | `tests/golden/test_phase4_runtime.py` |
+| HTTP/framework types stop at the surface (nothing below apps/ imports them) | `tests/conformance/test_http_boundary.py` |
+| Thin HTTP adapter: async /ask, durable task status, event history, restart-safe, explicit 4xx | `tests/golden/test_phase4_api.py` |
 | Router never bypasses policy | `tests/golden/test_phase1_composition.py` |
 | State is recoverable (a projection of events) | `tests/golden/test_phase0_foundation.py` |
 | The boring event envelope (one uniform shape) | enforced by the `Event` dataclass itself |

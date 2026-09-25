@@ -19,7 +19,9 @@ class DurableEventBus(EventBus):
 
     def __init__(self, path: str) -> None:
         super().__init__()
-        self._conn = sqlite3.connect(path)
+        # check_same_thread=False: the HTTP surface may publish/read from a
+        # threadpool thread different from the one that constructed the runtime.
+        self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS events ("
             "event_id TEXT PRIMARY KEY, event_type TEXT, timestamp TEXT, "

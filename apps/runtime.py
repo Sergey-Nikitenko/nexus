@@ -58,9 +58,12 @@ class NexusRuntime:
     def task(self, task_id: str):
         return self.queue.get(task_id)
 
-    def events(self, task_id: str):
-        """The durable event log for a task (a projection the surface can render)."""
+    def events(self, task_id: str | None = None, run_id: str | None = None):
+        """The durable event log for a task and/or run (a projection the surface
+        can render)."""
         loader = getattr(self.event_bus, "load_events", None)
         if loader is None:
-            return [e for e in self.event_bus.history if e.task_id == task_id]
-        return loader(task_id=task_id)
+            return [e for e in self.event_bus.history
+                    if (task_id is None or e.task_id == task_id)
+                    and (run_id is None or e.run_id == run_id)]
+        return loader(task_id=task_id, run_id=run_id)

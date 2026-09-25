@@ -778,7 +778,8 @@ Findings #3–#7 are proven together by `tests/golden/test_phase5_hardening.py`.
 ### Phase 6 — Differentiators (in this order)
 1. **Reproducible runs** — from a `run_id`, reconstruct models, prompts,
    retrieval, tool calls, config, decisions, events.
-2. **Multi-worker** — local / cloud / GPU workers behind the task queue.
+2. **Multi-worker** — local / cloud / GPU workers behind the task queue
+   (plus the A2-1 owner-guard on terminal transitions, carried from audit #2).
 3. **Nexus as an MCP server** — `nexus.ask`, `nexus.run_task`,
    `nexus.search_knowledge`, `nexus.get_trace`, `nexus.approve`; another agent
    can drive Nexus as a service.
@@ -930,6 +931,7 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 | Per-worker connections + deliberate SQLite policy (5.2): one connection per thread, busy_timeout/WAL, concurrent independent work | `tests/golden/test_phase5_connections.py` |
 | Task ownership is atomic (5.3): claim race + recovery/claim race → exactly one owner | `tests/golden/test_phase5_ownership.py` |
 | Per-attempt tool identity (5.4): same tool twice → distinct call_ids; recovery re-run → new call_id | `tests/golden/test_phase5_correlation.py` |
+| Full-stack concurrency: N workers drain READ/WRITE/BOOM tasks end-to-end — correct terminal states, per-attempt identity, clean partition | `tests/golden/test_phase5_system.py` |
 | Router never bypasses policy | `tests/golden/test_phase1_composition.py` |
 | State is recoverable (a projection of events) | `tests/golden/test_phase0_foundation.py` |
 | The boring event envelope (one uniform shape) | enforced by the `Event` dataclass itself |

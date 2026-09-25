@@ -248,3 +248,84 @@ building, recorded so the next reader (and future me) doesn't re-trip them.
   its private attributes by its own name (`_store_*`, `_bus_*`, …) so two mixins
   can never collide.
 
+## Audit #2 — concurrency + reconstruction (post-Phase-5)
+
+A second adversarial pass after Phase 5 (5.1–5.8), asking the ten questions a
+"production substrate" claim must survive. Every answer is a specific test or a
+documented non-guarantee — never an assertion.
+
+1. **Can two workers execute the same task concurrently?** — **No.** `claim()` is
+   one atomic `UPDATE … WHERE task_id = (SELECT … WHERE status=QUEUED …) RETURNING`;
+   SQLite serializes writers and the conditional subquery yields exactly one winner.
+   Proven: `test_phase5_ownership.py` (claim race), `test_phase5_system.py`
+   (multi-worker drain, no double-execution). At-least-once re-execution after
+   recovery is sequential, not concurrent (AD-018).
+
+2. **Can two workers consume the same authorization?** — **No.** `consume_approved`
+   is one conditional `UPDATE … WHERE status='approved'` gated by row count. Proven:
+   `test_phase5_concurrency.py` (two workers race, exactly one executes).
+
+3. **Can recovery race with normal execution?** — **No, at the transition.**
+   Recovery (CLAIMED→QUEUED) and claim (QUEUED→CLAIMED) target disjoint statuses
+   and are each one conditional UPDATE; exactly one owner results. Proven:
+   `test_phase5_ownership.py` (recovery/claim race). *Residual (A2-1, below):*
+   terminal transitions `complete`/`fail` are unconditional (`WHERE task_id=?`, no
+   owner guard), so a stale-but-alive worker whose lease expired could overwrite a
+   re-claimed task's completion. Unreachable under process-death recovery (the
+   stale worker is dead); reachable under Phase 6 multi-worker.
+
+4. **Can every physical capability attempt be uniquely correlated?** — **Yes.** The
+   orchestrator re-mints `call.call_id` per execution attempt, ignoring the
+   provider's id. Proven: `test_phase5_correlation.py` (recovery re-run → new
+   call_id), `test_phase5_system.py` (call_id uniqueness across concurrent workers).
+
+5. **Can task/run/approval state all be reconstructed from durable evidence?** —
+   **Yes.** `TaskState`, `RunState`, `ApprovalState` each reconstruct from their
+   event streams; the trace projects from the same events. Proven:
+   `test_phase0_foundation.py`, `test_phase3_recovery.py`, `test_phase5_hardening.py`
+   (#4). The durable log is the recovery substrate, not merely an audit trail.
+
+6. **Are event transitions idempotent?** — **Yes, where it matters.** Reconstruction
+   is deterministic (replaying the same events yields the same state); exclusive
+   transitions are single conditional UPDATEs (a retry no-ops once the status has
+   moved); event inserts are idempotent per event_id (UUID + `INSERT OR REPLACE`).
+   The one deliberate non-idempotency is at-least-once delivery (AD-018).
+
+7. **Are event schemas stable enough to call persisted data?** — **Stable, not yet
+   formalized.** Phase 5 added payload keys (`call_id`, `reason`, `timestamp`) as
+   backward-compatible additions; no rename/removal broke reconstruction. A
+   schema-version field would turn "stable by convention" into "formal persisted
+   data" — a Phase 6 reproducible-runs item, not a Phase 5 defect.
+
+8. **Does every surface remain observational?** — **Yes.** REST/WS/CLI/dashboard
+   observe projections; the approve/deny commands requeue/fail the task and never
+   touch `Executor`. Enforced: `test_surface_boundary.py`, `test_phase4_*.py`.
+
+9. **Does the provider-leakage boundary still hold?** — **Yes.** No Phase 5 change
+   moved a provider type upward. Enforced: `test_no_provider_leakage.py`,
+   `test_http_boundary.py`, `test_mcp_boundary.py`.
+
+10. **Does the entire system still work with FakeExecutor and stdlib persistence?**
+    — **Yes.** Every golden task runs against the reference executor + SQLite;
+    `test_phase5_system.py` runs the full stack concurrently on exactly that.
+
+**Findings (audit #2):**
+
+- **A2-1 (low, defer to Phase 6)** — terminal transitions are not owner-guarded. A
+  stale worker can overwrite a re-claimed task's `complete`/`fail`. Not reachable
+  in the process-death recovery model (the stale worker is killed); reachable under
+  slow-alive multi-worker. Fix: `UPDATE … WHERE task_id=? AND worker_id=?`.
+
+**Notes (not defects):**
+
+- In-memory `EventBus.history` is best-effort under concurrent publish (GIL-atomic
+  append, unordered); `load_events` is the authoritative log. Revisit only if live
+  multi-worker + WebSocket need a shared in-memory view.
+- `approve`/`deny` are unconditional transitions (no status guard); two concurrent
+  surface commands on the same approval would last-write-wins. Low severity (humans
+  don't race the same approval); a status-guarded transition would tighten it.
+
+**Verdict:** Phase 5 concurrency mechanics are sound — all ten questions answer as
+above, and the one residual (A2-1) is a Phase 6 multi-worker concern, not a Phase 5
+regression. Phase 5 has earned its "production substrate" claim.
+

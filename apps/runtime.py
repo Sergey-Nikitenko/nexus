@@ -68,3 +68,22 @@ class NexusRuntime:
                     if (task_id is None or e.task_id == task_id)
                     and (run_id is None or e.run_id == run_id)]
         return loader(task_id=task_id, run_id=run_id)
+
+    def approve(self, approval_id: str):
+        """Approve a pending approval and requeue its task — a command, never an
+        execution. Returns the approval, or None if approvals aren't wired."""
+        if self.approvals is None:
+            return None
+        approval = self.approvals.approve(approval_id)
+        if approval is not None:
+            self.queue.requeue(approval.task_id)
+        return approval
+
+    def deny(self, approval_id: str):
+        """Deny a pending approval and fail its task — a command, never an execution."""
+        if self.approvals is None:
+            return None
+        approval = self.approvals.deny(approval_id)
+        if approval is not None:
+            self.queue.fail(approval.task_id, "approval denied")
+        return approval

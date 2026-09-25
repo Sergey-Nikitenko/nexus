@@ -656,6 +656,30 @@ Nexus's durable event and state projections — it can observe, display, and
 request human authorization, but cannot execute capabilities or become an
 independent source of truth.*
 
+### Phase 4.7 — the CLI (another thin surface)
+
+    nexus ask | task | trace | approve | deny  ->  NexusRuntime
+
+- **The CLI is another surface adapter** — `ask` is asynchronous (returns a
+  queued task id, exactly like HTTP), `task`/`trace` render the SAME projected
+  view model the dashboard uses, and `approve`/`deny` call the SAME
+  `runtime.approve`/`runtime.deny` the HTTP layer uses. No orchestration, no
+  policy, no queue manipulation, no provider imports.
+
+**Phase 4.7 acceptance:** *REST, WebSocket, the dashboard, and the CLI are four
+disposable views of one execution model — they observe and command the same
+durable runtime rather than implementing parallel agent behavior.*
+
+### Phase 4 complete — one execution model, many disposable surfaces
+
+Nexus has a single execution model (contracts → policy → executor → durable
+events → state) and multiple disposable surfaces over it. Every surface consumes
+the same `NexusRuntime`, the same contracts, and the same event projections.
+
+**Next: a whole-system architectural audit** (before Phase 5 hardening), in five
+passes — dependency graph, event taxonomy, state/event transition graphs,
+concurrency semantics, and public-contract compatibility.
+
 ### Phase 5 — Hardening
 - **Secrets:** never enter prompts, traces, or model-visible logs.
 - **Tool execution:** timeouts, resource limits, filesystem boundaries,
@@ -811,6 +835,7 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 | WebSocket: replay + live tail, run_id filter, downstream (no execution/event-log effect) | `tests/golden/test_phase4_ws.py` |
 | Approval lifecycle: durable waiting, single-use, task-bound, policy re-checked, downstream purity | `tests/golden/test_phase4_approval.py` |
 | Dashboard: disposable projection consumer — decisions/attempts/recovery/interruption, no authority | `tests/golden/test_phase4_dashboard.py` |
+| CLI: thin surface adapter — same async ask + same projected views as REST/WS/dashboard | `tests/golden/test_phase4_cli.py` |
 | Router never bypasses policy | `tests/golden/test_phase1_composition.py` |
 | State is recoverable (a projection of events) | `tests/golden/test_phase0_foundation.py` |
 | The boring event envelope (one uniform shape) | enforced by the `Event` dataclass itself |

@@ -47,10 +47,12 @@ class NexusRuntime:
                              orchestrator=self.orchestrator, run_records=self.run_records)
 
     # -- application surface (identical for fake and real components) -------
-    def ask(self, title: str) -> str:
+    def ask(self, title: str, agent: str = "", parent_run_id: str = "") -> str:
         """Submit a task; returns its id. Asynchronous by default — the caller
-        polls `task`/`events` rather than blocking on the whole run."""
-        task = Task(task_id=new_id("task"), title=title)
+        polls `task`/`events` rather than blocking on the whole run. `agent` and
+        `parent_run_id` record multi-agent delegation (AD-034)."""
+        task = Task(task_id=new_id("task"), title=title,
+                    agent=agent, parent_run_id=parent_run_id)
         self.queue.enqueue(task)
         return task.task_id
 

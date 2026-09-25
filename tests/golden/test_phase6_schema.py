@@ -89,7 +89,8 @@ def main():
     manifest_fields = {f.name for f in dc_fields(RunManifest)}
     check("schema_version" not in manifest_fields and "user_version" not in manifest_fields,
           "RunManifest has no schema-version field (schema version != contract/component identity)")
-    check(SCHEMA_VERSION == 1, "SCHEMA_VERSION is a distinct on-disk format version")
+    check(isinstance(SCHEMA_VERSION, int) and SCHEMA_VERSION > 0,
+          "SCHEMA_VERSION is a distinct on-disk format version (a positive int)")
     # the migration is column-additive and header-only: it never rewrites a data
     # row's values, so event payloads (and therefore 6.1 fingerprints) are unchanged.
 

@@ -64,6 +64,8 @@ class Task:
     created_at: datetime = field(default_factory=utcnow)
     status: TaskStatus = TaskStatus.QUEUED
     run_ids: list[str] = field(default_factory=list)
+    agent: str = ""             # which agent ROLE this task belongs to (AD-034)
+    parent_run_id: str = ""     # the delegating run, if this task was delegated
 
 
 @dataclass
@@ -106,6 +108,8 @@ class RunManifest:
     tools: str          # tool registry identity/version
     router: str = ""    # router configuration (reserved until model selection)
     max_replans: int = 2
+    agent: str = ""             # the agent ROLE that performed this run (AD-034)
+    parent_run_id: str = ""     # the delegating run (empty = top-level)
 
 
 @dataclass

@@ -25,7 +25,8 @@ from __future__ import annotations
 import sqlite3
 
 # The on-disk format version this build writes and understands.
-SCHEMA_VERSION = 1
+# v2: the tasks table gained `agent` + `parent_run_id` (multi-agent, 6.6).
+SCHEMA_VERSION = 2
 
 
 def read_version(conn: sqlite3.Connection) -> int:

@@ -212,6 +212,8 @@ class Orchestrator:
             tools=_snapshot(self.tools),
             router="",
             max_replans=self.max_replans,
+            agent=task.agent,
+            parent_run_id=task.parent_run_id,
         )
         if self.run_records is not None:
             self.run_records.record_manifest(run.run_id, task.task_id, manifest)

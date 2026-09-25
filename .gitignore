@@ -3,3 +3,5 @@
 .venv/
 .env
 .pytest_cache/
+
+TALKING_POINTS.md

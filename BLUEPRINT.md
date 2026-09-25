@@ -940,33 +940,6 @@ Proven by `tests/golden/test_phase6_multiagent.py`.
 **Phase 6 is complete:** 5.x ownership → 6.1 reproduction → 6.2 interpretation →
 6.3 identity → 6.4 arbitration → 6.5 interoperability → 6.6 composition.
 
-### Phase 7 — identity & continuity (Mnemosyne)
-
-Phase 7 builds the persistent identity/continuity layer on top of the execution
-substrate: **Nexus owns identity, memory, knowledge, continuity, and state; models
-are pluggable reasoning backends.** (The build name for this plane is **Mnemosyne**;
-Nexus remains the framework.)
-
-### Phase 7.1 — identity contracts
-
-Freeze the three identities before continuity, context adaptation, or routing can
-invent their own (AD-035):
-
-- **`UserIdentity`** — who is interacting (user_id; no auth/provider fields).
-- **`AgentIdentity`** — which agent ROLE is acting (agent_id/role/version).
-- **`ModelIdentity`** — which logical model configuration participated
-  (model_id/family/version; never the API key, endpoint, SDK object, or client).
-
-Each is a serializable, versionable core contract with a canonical `key`
-(`user/alice`, `agent/researcher@1`, `model/fake-deterministic@1`), carried in the
-`RunManifest`. The invariant: **a model swap changes only `ModelIdentity` — user
-and agent are untouched.** `ModelIdentity` equality is on its logical fields only,
-so the concrete SDK object behind it is irrelevant.
-
-Proven by `tests/golden/test_phase7_identity.py` (persistence, fresh-process
-reconstruction, model-swap invariant, Nexus-only serialization, and 6.1/6.3
-fingerprint behavior intact).
-
 ## Golden tasks
 
 20–50 deterministic tasks that must pass after every architectural change:
@@ -1024,7 +997,6 @@ Decisions whose wrong interpretation could cause regressions. Not a changelog.
 - **AD-032** — A run's terminal fingerprint is authoritative only if its claim generation was current at completion: the orchestrator records the manifest at start; the worker records the terminal fingerprint only after its claim generation is confirmed current. A stale worker leaves a NULL fingerprint, so recovery can never manufacture a second authoritative run.
 - **AD-033** — An ingress protocol (MCP, HTTP, CLI) is a disposable surface over `NexusRuntime`: the adapter owns the protocol's vocabulary and only Nexus contracts cross. Nexus can be an MCP server without the orchestrator (or core/control/execution/knowledge) importing MCP vocabulary — the provider-neutrality of 3.8's MCP executor, inverted.
 - **AD-034** — An agent is a capability composition, not a new execution substrate: a stable logical identity (`agent`) plus a runtime, delegating through `parent_run_id`. Agent identity is never conflated with worker_id/task_id/run_id; a delegated agent cannot bypass policy; and each child run keeps its own identity and fingerprint.
-- **AD-035** — Identity and continuity are Nexus-owned, durable, and model-agnostic: `UserIdentity`, `AgentIdentity`, and `ModelIdentity` are stable, versionable contracts carried in the `RunManifest`; the model is a pluggable reasoning backend that instantiates (never owns) state. A model swap changes only `ModelIdentity` — user and agent identity are untouched — and `ModelIdentity` equality is on logical fields only, never the provider config (API key, endpoint, SDK object, client).
 
 ## Contract conformance: MUST MATCH vs MAY DIFFER
 
@@ -1128,7 +1100,6 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 | Multi-worker arbitration (6.4): a stale worker cannot publish a terminal run record; exactly one authoritative run per task | `tests/golden/test_phase6_arbitration.py` |
 | Nexus as an MCP server (6.5): adapter owns MCP vocabulary, durable lifecycle preserved, failure taxonomy intact | `tests/conformance/test_nexus_mcp_boundary.py` |
 | Multi-agent composition (6.6): explicit agent identity + durable delegation, policy preserved, child outcomes compositional | `tests/golden/test_phase6_multiagent.py` |
-| Identity contracts (7.1): User/Agent/Model identities persisted in the manifest; a model swap changes only ModelIdentity | `tests/golden/test_phase7_identity.py` |
 | Router never bypasses policy | `tests/golden/test_phase1_composition.py` |
 | State is recoverable (a projection of events) | `tests/golden/test_phase0_foundation.py` |
 | The boring event envelope (one uniform shape) | enforced by the `Event` dataclass itself |

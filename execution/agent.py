@@ -16,17 +16,15 @@ from __future__ import annotations
 
 
 class Agent:
-    def __init__(self, *, agent_id: str, runtime, role: str = "", user: str = "") -> None:
+    def __init__(self, *, agent_id: str, runtime, role: str = "") -> None:
         self.agent_id = agent_id
         self.role = role or agent_id
-        self.user = user
-        self.runtime = runtime  # duck-typed: .ask(title, user, agent, parent_run_id), .run_one()
+        self.runtime = runtime  # duck-typed: .ask(title, agent, parent_run_id), .run_one()
 
     def submit(self, title: str, parent_run_id: str = "") -> str:
         """Submit a task FOR this agent, optionally recording the delegating run.
         Returns the durable task_id."""
-        return self.runtime.ask(title, user=self.user, agent=self.agent_id,
-                                parent_run_id=parent_run_id)
+        return self.runtime.ask(title, agent=self.agent_id, parent_run_id=parent_run_id)
 
     def run_one(self):
         """Drain one queued task through this agent's runtime."""

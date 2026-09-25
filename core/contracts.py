@@ -64,8 +64,7 @@ class Task:
     created_at: datetime = field(default_factory=utcnow)
     status: TaskStatus = TaskStatus.QUEUED
     run_ids: list[str] = field(default_factory=list)
-    user: str = ""              # user_id — who submitted this task (AD-035)
-    agent: str = ""             # agent_id — which ROLE this task belongs to (AD-034)
+    agent: str = ""             # which agent ROLE this task belongs to (AD-034)
     parent_run_id: str = ""     # the delegating run, if this task was delegated
 
 
@@ -92,52 +91,6 @@ class ReplayStatus(str, Enum):
 
 
 @dataclass
-class UserIdentity:
-    """Who is interacting with Nexus — a stable logical identity (AD-035).
-
-    No authentication or provider-specific fields: an API key, OAuth token,
-    endpoint URL, or SDK object is a secret/config, never identity."""
-    user_id: str = ""
-
-    @property
-    def key(self) -> str:
-        return f"user/{self.user_id}"
-
-
-@dataclass
-class AgentIdentity:
-    """Which agent ROLE is acting — a stable role/configuration identity (AD-035).
-
-    Distinct from worker_id (who ran it), task_id (which task), run_id (which
-    attempt), and ModelIdentity (which engine). The agent survives model
-    replacement."""
-    agent_id: str = ""
-    role: str = ""
-    version: str = "1"
-
-    @property
-    def key(self) -> str:
-        return f"agent/{self.agent_id}@{self.version}"
-
-
-@dataclass
-class ModelIdentity:
-    """Which logical model configuration participated (AD-035).
-
-    Deliberately NOT the provider configuration — an API key, endpoint URL, SDK
-    object, or instantiated client is an implementation detail, never identity.
-    Equality is on (model_id, family, version) only, so a model swap changes the
-    identity while the concrete SDK object behind it is irrelevant."""
-    model_id: str = "unknown"
-    family: str = ""
-    version: str = "1"
-
-    @property
-    def key(self) -> str:
-        return f"model/{self.model_id}@{self.version}"
-
-
-@dataclass
 class RunManifest:
     """The inputs that define a run, captured BEFORE execution (AD-029).
 
@@ -151,12 +104,11 @@ class RunManifest:
     task_title: str
     knowledge: str      # knowledge snapshot identity/version
     policy: str         # policy identity/version
-    model: ModelIdentity  # which logical model configuration participated
+    model: str          # model identity/config (Nexus vocabulary)
     tools: str          # tool registry identity/version
     router: str = ""    # router configuration (reserved until model selection)
     max_replans: int = 2
-    user: UserIdentity = field(default_factory=UserIdentity)     # who (AD-035)
-    agent: AgentIdentity = field(default_factory=AgentIdentity)  # which role (AD-034/035)
+    agent: str = ""             # the agent ROLE that performed this run (AD-034)
     parent_run_id: str = ""     # the delegating run (empty = top-level)
 
 

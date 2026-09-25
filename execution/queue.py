@@ -46,16 +46,14 @@ class TaskQueue(SqliteStore):
             "CREATE TABLE IF NOT EXISTS tasks ("
             "task_id TEXT PRIMARY KEY, title TEXT, status TEXT, worker_id TEXT, "
             "claimed_at TEXT, claim_generation INTEGER DEFAULT 0, "
-            "user TEXT, agent TEXT, parent_run_id TEXT, answer TEXT, error TEXT)")
+            "agent TEXT, parent_run_id TEXT, answer TEXT, error TEXT)")
 
     def _migrate(self, conn, from_version: int) -> None:
-        # v0 lacked claim_generation; v1 lacked agent/parent_run_id; v2 lacked
-        # user. Reconcile each column idempotently, whichever version we came from.
+        # v0 lacked claim_generation; v1 lacked agent/parent_run_id (multi-agent).
+        # Reconcile each column idempotently, whichever version we came from.
         cols = {r[1] for r in conn.execute("PRAGMA table_info(tasks)")}
         if "claim_generation" not in cols:
             conn.execute("ALTER TABLE tasks ADD COLUMN claim_generation INTEGER DEFAULT 0")
-        if "user" not in cols:
-            conn.execute("ALTER TABLE tasks ADD COLUMN user TEXT")
         if "agent" not in cols:
             conn.execute("ALTER TABLE tasks ADD COLUMN agent TEXT")
         if "parent_run_id" not in cols:
@@ -74,10 +72,10 @@ class TaskQueue(SqliteStore):
         conn = self._conn()
         conn.execute(
             "INSERT OR IGNORE INTO tasks (task_id, title, status, worker_id, "
-            "claimed_at, claim_generation, user, agent, parent_run_id, answer, error) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "claimed_at, claim_generation, agent, parent_run_id, answer, error) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
             (task.task_id, task.title, TaskStatus.QUEUED.value, None, None, 0,
-             task.user, task.agent, task.parent_run_id, None, None))
+             task.agent, task.parent_run_id, None, None))
         conn.commit()
         self._emit(EventType.TASK_QUEUED, task)
 
@@ -93,14 +91,14 @@ class TaskQueue(SqliteStore):
             "UPDATE tasks SET status=?, worker_id=?, claimed_at=?, "
             "claim_generation=claim_generation+1 "
             "WHERE task_id = (SELECT task_id FROM tasks WHERE status=? ORDER BY rowid LIMIT 1) "
-            "RETURNING task_id, title, claim_generation, user, agent, parent_run_id",
+            "RETURNING task_id, title, claim_generation, agent, parent_run_id",
             (TaskStatus.CLAIMED.value, worker_id, claimed_at, TaskStatus.QUEUED.value),
         ).fetchone()
         conn.commit()
         if row is None:
             return None
         task = Task(task_id=row[0], title=row[1], status=TaskStatus.CLAIMED,
-                    user=row[3] or "", agent=row[4] or "", parent_run_id=row[5] or "")
+                    agent=row[3] or "", parent_run_id=row[4] or "")
         claim = Claim(task=task, worker_id=worker_id, generation=row[2])
         self._emit(EventType.TASK_CLAIMED, task, {
             "worker_id": worker_id, "claimed_at": claimed_at,
@@ -190,12 +188,12 @@ class TaskQueue(SqliteStore):
     def get(self, task_id: str) -> Task | None:
         conn = self._conn()
         row = conn.execute(
-            "SELECT task_id, title, status, user, agent, parent_run_id FROM tasks WHERE task_id=?",
+            "SELECT task_id, title, status, agent, parent_run_id FROM tasks WHERE task_id=?",
             (task_id,)).fetchone()
         if row is None:
             return None
         return Task(task_id=row[0], title=row[1], status=TaskStatus(row[2]),
-                    user=row[3] or "", agent=row[4] or "", parent_run_id=row[5] or "")
+                    agent=row[3] or "", parent_run_id=row[4] or "")
 
     def owner(self, task_id: str) -> str | None:
         """The worker_id currently owning a task (None if not claimed)."""

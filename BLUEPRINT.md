@@ -494,6 +494,36 @@ gates every call, and nothing provider-shaped leaks above the adapter.*
 API (REST + WebSocket), dashboard (run view, trace tree, approval queue, *Why*
 panel), CLI. The dashboard is driven directly off the decision objects.
 
+Sequencing: 4.1 runtime composition → 4.2 REST `/ask` + status → 4.3 trace
+projection → 4.4 WebSocket event stream → 4.5 approval lifecycle → 4.6 dashboard
+→ 4.7 CLI. (Not seven commits — these are the conceptual boundaries.)
+
+### Phase 4.1 — runtime composition (the composition root)
+
+One root wires the real system together:
+
+    NexusRuntime
+        ├── Control (router, policy, evaluator)
+        ├── Execution (worker, queue, executor)
+        ├── Knowledge (retriever, store)
+        └── Durable events -> State
+
+- **Applications compose Nexus; components never discover each other through
+  global state (AD-021).** `NexusRuntime` takes everything as constructor
+  arguments and is the ONLY place that wires orchestrator + worker + queue + bus.
+- **The application surface is uniform:** `ask` (async, returns a task id),
+  `run_one`, `task`, `events` — identical whether the injected components are
+  fakes (FakeExecutor, reference retriever, SQLite) or real (MCP + model adapter,
+  Chroma, durable events, real workers). The golden test runs both and asserts
+  only the components differ.
+- **The surface is a leaf:** nothing below `apps/` may import `apps/` —
+  execution never depends on the surface. Enforced by
+  `tests/conformance/test_surface_boundary.py`.
+
+**Phase 4.1 acceptance:** *one runtime composes fake or real components behind
+the same application surface, with no global-state discovery, and the execution
+plane remains surface-agnostic.*
+
 ### Phase 5 — Hardening
 - **Secrets:** never enter prompts, traces, or model-visible logs.
 - **Tool execution:** timeouts, resource limits, filesystem boundaries,
@@ -554,6 +584,7 @@ Decisions whose wrong interpretation could cause regressions. Not a changelog.
 - **AD-018** — Task delivery is at-least-once, never exactly-once; duplicate tool execution after recovery is explicit and observable, and idempotency/recovery is applied where required (as with stable chunk ids).
 - **AD-019** — Recovery is a lease rule on durable evidence (`CLAIMED` + expired `claimed_at` → recoverable), and it lives in queue infrastructure — never the orchestrator, which has no idea whether it is running normally or after a previous worker died.
 - **AD-020** — MCP is implementation #N: the adapter owns MCP's vocabulary (JSON-RPC, `tools/list`, `tools/call`); `ToolCall`/`ToolResult`/`ToolDefinition` stay Nexus contracts, and MCP libraries are confined to the integration layer.
+- **AD-021** — Applications compose Nexus; Nexus components do not discover each other through global state. The surface observes and commands through contracts/events, and execution never depends on the surface.
 
 ## Contract conformance: MUST MATCH vs MAY DIFFER
 
@@ -634,6 +665,8 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 | Crash recovery under real process death (two failure points, lease-based requeue, reconstruct) | `tests/golden/test_phase3_recovery.py` |
 | MCP adapter boundary: only Nexus contracts cross (provider-specific fields dropped, AD-010) | `tests/conformance/test_mcp_boundary.py` |
 | MCP end-to-end: unchanged orchestrator, policy above MCP, DI-only swap | `tests/golden/test_phase3_mcp.py` |
+| The surface is a leaf; execution never depends on it | `tests/conformance/test_surface_boundary.py` |
+| Runtime composition: applications compose Nexus, no global-state discovery, uniform surface | `tests/golden/test_phase4_runtime.py` |
 | Router never bypasses policy | `tests/golden/test_phase1_composition.py` |
 | State is recoverable (a projection of events) | `tests/golden/test_phase0_foundation.py` |
 | The boring event envelope (one uniform shape) | enforced by the `Event` dataclass itself |

@@ -96,6 +96,7 @@ class ToolCall:
     tool_name: str
     arguments: dict[str, Any] = field(default_factory=dict)
     idempotency_key: str | None = None
+    call_id: str = field(default_factory=lambda: new_id("call"))
 
 
 @dataclass

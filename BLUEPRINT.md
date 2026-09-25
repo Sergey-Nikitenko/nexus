@@ -697,6 +697,52 @@ every other gets 0 and must not execute. Proven by
 `tests/golden/test_phase5_concurrency.py`, which races two workers (separate
 connections) and asserts exactly one execution.
 
+### Phase 5.2 — SQLite concurrency policy (deferred)
+
+Finding #2 — a single connection written from two threads with
+`check_same_thread=False` is unsafe — is the one high finding this batch does not
+close. It is its own milestone: one connection per thread, or a write lock, or
+serialization through a single writer. Not yet implemented; the 5.1/5.6
+guarantees hold because workers and tests use separate connections and the
+queue/store writes are single-statement and atomic.
+
+### Phase 5.3 — per-call tool identity
+
+`tool.requested` and `tool.completed` carried no per-call id, so two overlapping
+tool calls in one run were indistinguishable in the trace. `ToolCall` now carries
+`call_id`, threaded through `tool.requested` / `tool.completed` /
+`policy.decision`, and the trace projector pairs requested↔completed by call_id
+(falling back to tool name only for pre-5.3 logs). An interrupted call and a
+later completed call are never conflated.
+
+### Phase 5.4 — event-sourced approvals
+
+Approval status lived only in the SQLite table. `ApprovalState.reconstruct`
+(approval_id, events) now reproduces the lifecycle (pending → approved/denied →
+consumed) from events alone — the same "state is a projection of events"
+discipline already held by `RunState` and `TaskState`.
+
+### Phase 5.5 — terminal step semantics
+
+A step that raised an exception left no `step.failed` event. The orchestrator now
+catches, emits `step.failed`, marks the step FAILED, then re-raises. Process death
+still leaves no terminal event — that is exactly how an interruption is detected.
+
+### Phase 5.6 — atomic recovery
+
+`recover_abandoned` previously SELECTed expired tasks then UPDATEed each, so two
+recoverers could both requeue the same task (double `task.requeued`). It is now
+one atomic conditional `UPDATE … WHERE status='claimed' AND claimed_at < ?
+RETURNING task_id`: exactly one recoverer gets the row.
+
+### Phase 5.7 — event taxonomy cleanup
+
+Removed the dead `TASK_CREATED` type; reserved `MODEL_SELECTED` and
+`MODEL_FALLBACK` for Phase 6 model selection; `STEP_FAILED` is now live (5.5).
+The taxonomy is back to "every type is either emitted or explicitly reserved."
+
+Findings #3–#7 are proven together by `tests/golden/test_phase5_hardening.py`.
+
 ### Phase 5 (continued) — Hardening
 - **Secrets:** never enter prompts, traces, or model-visible logs.
 - **Tool execution:** timeouts, resource limits, filesystem boundaries,
@@ -854,6 +900,7 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 | Dashboard: disposable projection consumer — decisions/attempts/recovery/interruption, no authority | `tests/golden/test_phase4_dashboard.py` |
 | CLI: thin surface adapter — same async ask + same projected views as REST/WS/dashboard | `tests/golden/test_phase4_cli.py` |
 | Atomic approval consumption: two workers race, exactly one executes (single-use) | `tests/golden/test_phase5_concurrency.py` |
+| Hardening: per-call tool identity, event-sourced approval, terminal step semantics, atomic recovery, dead-event cleanup | `tests/golden/test_phase5_hardening.py` |
 | Router never bypasses policy | `tests/golden/test_phase1_composition.py` |
 | State is recoverable (a projection of events) | `tests/golden/test_phase0_foundation.py` |
 | The boring event envelope (one uniform shape) | enforced by the `Event` dataclass itself |

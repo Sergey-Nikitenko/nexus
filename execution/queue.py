@@ -74,25 +74,22 @@ class TaskQueue:
         return task
 
     def recover_abandoned(self, lease_seconds: float, now=None) -> list[str]:
-        """Requeue CLAIMED tasks whose lease has expired.
+        """Requeue CLAIMED tasks whose lease has expired — atomically.
 
-        Recovery is based on durable evidence (status=CLAIMED + claimed_at older
-        than the lease) — never on knowing which worker died. `now` is injectable
-        so tests can control the clock."""
+        One conditional UPDATE ... RETURNING decides ownership: a task is requeued
+        only if it is still CLAIMED, so two competing recoverers can never both
+        requeue (and double-emit task.requeued for) the same task. `now` is
+        injectable so tests can control the clock."""
         now = now or utcnow()
         cutoff = (now - timedelta(seconds=lease_seconds)).isoformat()
         rows = self._conn.execute(
-            "SELECT task_id FROM tasks WHERE status=? AND claimed_at IS NOT NULL "
-            "AND claimed_at < ?",
-            (TaskStatus.CLAIMED.value, cutoff),
+            "UPDATE tasks SET status=?, worker_id=NULL, claimed_at=NULL "
+            "WHERE status=? AND claimed_at IS NOT NULL AND claimed_at < ? "
+            "RETURNING task_id",
+            (TaskStatus.QUEUED.value, TaskStatus.CLAIMED.value, cutoff),
         ).fetchall()
-        recovered = []
-        for (task_id,) in rows:
-            self._conn.execute(
-                "UPDATE tasks SET status=?, worker_id=NULL, claimed_at=NULL "
-                "WHERE task_id=?", (TaskStatus.QUEUED.value, task_id))
-            recovered.append(task_id)
         self._conn.commit()
+        recovered = [r[0] for r in rows]
         for task_id in recovered:
             self._emit(EventType.TASK_REQUEUED, self.get(task_id))
         return recovered

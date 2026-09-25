@@ -46,10 +46,11 @@ class InstrumentedExecutor:
     def execute_tool(self, call: ToolCall) -> ToolResult:
         # event BEFORE the step can be considered complete (and before it even runs)
         self._emit(EventType.TOOL_REQUESTED, "running",
-                   {"tool": call.tool_name, "arguments": call.arguments})
+                   {"tool": call.tool_name, "arguments": call.arguments, "call_id": call.call_id})
         result = self.inner.execute_tool(call)
         self._emit(EventType.TOOL_COMPLETED, "success" if result.success else "failed",
-                   {"tool": call.tool_name, "success": result.success, "error": result.error})
+                   {"tool": call.tool_name, "success": result.success, "error": result.error,
+                    "call_id": call.call_id})
         return result
 
     def run_model(self, request: ModelRequest) -> ModelResponse:

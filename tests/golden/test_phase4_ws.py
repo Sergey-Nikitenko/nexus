@@ -137,7 +137,7 @@ def main():
                     "answer", "tool", "verdict", "risk", "executed", "completed",
                     "success", "interrupted", "request_id", "model", "passed",
                     "reason", "attempt", "worker_id", "chunks", "run_id",
-                    "task_id", "timestamp", "detail", "name")
+                    "task_id", "timestamp", "call_id", "detail", "name")
               for m in replay for k in m.keys()),
           "the wire format carries only Nexus-level keys (no provider vocabulary)")
 

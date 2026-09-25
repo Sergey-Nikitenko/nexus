@@ -13,7 +13,6 @@ from .contracts import Event
 
 
 class EventType(str):
-    TASK_CREATED = "task.created"
     TASK_QUEUED = "task.queued"
     TASK_CLAIMED = "task.claimed"
     TASK_WAITING = "task.waiting"
@@ -24,7 +23,11 @@ class EventType(str):
     STEP_STARTED = "step.started"
     STEP_COMPLETED = "step.completed"
     STEP_FAILED = "step.failed"
+    # RESERVED (not yet emitted): model selection/fallback are Phase 6 — the
+    # router is not wired into the orchestrator yet, but the event names are
+    # reserved so the taxonomy doesn't churn later.
     MODEL_SELECTED = "model.selected"
+    MODEL_FALLBACK = "model.fallback"
     MODEL_REQUESTED = "model.requested"
     MODEL_COMPLETED = "model.completed"
     RETRIEVAL_REQUESTED = "retrieval.requested"
@@ -36,7 +39,6 @@ class EventType(str):
     APPROVAL_GRANTED = "approval.granted"
     APPROVAL_DENIED = "approval.denied"
     APPROVAL_CONSUMED = "approval.consumed"
-    MODEL_FALLBACK = "model.fallback"
     EVALUATION_COMPLETED = "evaluation.completed"
     RUN_REPLANNED = "run.replanned"
     RUN_COMPLETED = "run.completed"

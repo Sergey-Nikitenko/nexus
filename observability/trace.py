@@ -18,16 +18,18 @@ class TraceProjector:
     def project(self, events) -> Trace:
         events = list(events)
         run_id = next((e.run_id for e in events if e.run_id), "")
-        # pair tool.requested with tool.completed (FIFO per tool) so an
-        # interrupted execution is explicit, never silently a success.
-        completed_by_tool: dict[str, list] = {}
+        # pair tool.requested with tool.completed by call_id, so an interrupted
+        # execution is explicit (never silently a success) and two same-named
+        # tools never cross-correlate.
+        completed_by_call: dict[str, list] = {}
         for e in events:
             if e.event_type == EventType.TOOL_COMPLETED:
-                completed_by_tool.setdefault(e.payload.get("tool"), []).append(e)
+                key = e.payload.get("call_id") or e.payload.get("tool")
+                completed_by_call.setdefault(key, []).append(e)
 
         nodes: list[dict] = []
         for e in events:
-            node = self._project(e, completed_by_tool)
+            node = self._project(e, completed_by_call)
             if node is not None:
                 nodes.append(node)
         return Trace(run_id=run_id, nodes=nodes)
@@ -42,7 +44,7 @@ class TraceProjector:
             "timestamp": e.timestamp.isoformat(),
         }
 
-    def _project(self, e, completed_by_tool) -> dict | None:
+    def _project(self, e, completed_by_call) -> dict | None:
         p = e.payload or {}
         t = e.event_type
         base = self._base(e)
@@ -75,8 +77,9 @@ class TraceProjector:
         if t == EventType.APPROVAL_REQUIRED:
             return {**base, "type": "approval", "tool": p.get("tool")}
         if t == EventType.TOOL_REQUESTED:
-            queue = completed_by_tool.get(p.get("tool"), [])
-            node = {**base, "type": "tool", "tool": p.get("tool")}
+            key = p.get("call_id") or p.get("tool")
+            queue = completed_by_call.get(key, [])
+            node = {**base, "type": "tool", "tool": p.get("tool"), "call_id": p.get("call_id")}
             if queue:
                 done = queue.pop(0)
                 node["completed"] = True

@@ -77,7 +77,16 @@ class Orchestrator:
             run.steps.append(s)
             state.step_status[s.step_id] = StepStatus.RUNNING
             emit(EventType.STEP_STARTED, "running", {"step_id": s.step_id, "name": name})
-            result = work()
+            try:
+                result = work()
+            except Exception:
+                # a NORMAL exception reaches a terminal step state (step.failed);
+                # a hard process death leaves step.started with NO terminal event —
+                # that distinction is how an interrupted operation is detected.
+                s.status = StepStatus.FAIL
+                state.step_status[s.step_id] = StepStatus.FAIL
+                emit(EventType.STEP_FAILED, "failed", {"step_id": s.step_id, "name": name})
+                raise
             s.status = StepStatus.PASS
             state.step_status[s.step_id] = StepStatus.PASS
             emit(EventType.STEP_COMPLETED, "success", {"step_id": s.step_id, "name": name})
@@ -111,6 +120,7 @@ class Orchestrator:
                     "risk": spec.risk.value,
                     "executed": verdict == PolicyVerdict.ALLOW,
                     "reason": reason,
+                    "call_id": call.call_id,
                 })
                 if verdict == PolicyVerdict.ALLOW:
                     result = instr.execute_tool(call)

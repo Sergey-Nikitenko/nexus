@@ -51,44 +51,31 @@ Two notes, not violations:
 
 Inventory (who emits / durable? / reconstructible? / correlation):
 
-| Event | Emitter | Durable | Reconstructible | Correlation |
-|---|---|---|---|---|
-| `run.started/completed/failed/replanned` | orchestrator | ✓ | ✓ RunState | run_id, task_id |
-| `step.started/completed` | orchestrator | ✓ | ✓ RunState | step_id |
-| `retrieval.requested/completed` | orchestrator | ✓ | — | run_id, query |
-| `model.requested/completed` | InstrumentedExecutor | ✓ | — | request_id |
-| `tool.requested/completed` | InstrumentedExecutor | ✓ | ✓ (partial) | **tool name only** |
-| `policy.decision` | orchestrator | ✓ | ✓ trace | tool, verdict, risk, executed, reason |
-| `approval.required/granted/denied/consumed` | ApprovalStore | ✓ | **✗** | approval_id, task_id, run_id |
-| `evaluation.completed` | orchestrator | ✓ | ✓ RunState | attempt, passed, reason |
-| `task.queued/claimed/waiting/requeued/completed/failed` | queue | ✓ | ✓ TaskState | task_id, worker_id |
+- **`run.*`** (`started` / `completed` / `failed` / `replanned`) — orchestrator. Durable ✓ · reconstructible ✓ (RunState) · correlation: run_id, task_id.
+- **`step.*`** (`started` / `completed` / `failed`) — orchestrator. Durable ✓ · reconstructible ✓ (RunState) · correlation: step_id.
+- **`retrieval.*`** (`requested` / `completed`) — orchestrator. Durable ✓ · correlation: run_id, query.
+- **`model.*`** (`requested` / `completed`) — InstrumentedExecutor. Durable ✓ · correlation: request_id.
+- **`tool.*`** (`requested` / `completed`) — InstrumentedExecutor. Durable ✓ · reconstructible ✓ (trace) · correlation: **call_id**.
+- **`policy.decision`** — orchestrator. Durable ✓ · reconstructible ✓ (trace) · correlation: tool, verdict, risk, executed, reason, call_id.
+- **`approval.*`** (`required` / `granted` / `denied` / `consumed`) — ApprovalStore. Durable ✓ · reconstructible ✓ (ApprovalState) · correlation: approval_id, task_id, run_id.
+- **`evaluation.completed`** — orchestrator. Durable ✓ · reconstructible ✓ (RunState) · correlation: attempt, passed, reason.
+- **`task.*`** (`queued` / `claimed` / `waiting` / `requeued` / `completed` / `failed`) — queue. Durable ✓ · reconstructible ✓ (TaskState) · correlation: task_id, worker_id.
 
-**Findings:**
+**Findings (resolved in Phase 5):**
 
-1. **Four dead event types** (`defined`, never emitted): `TASK_CREATED`,
-   `MODEL_SELECTED`, `MODEL_FALLBACK`, `STEP_FAILED`.
-   - `MODEL_SELECTED` / `MODEL_FALLBACK`: the router (model selection) is not
-     wired into the orchestrator — it uses the injected executor directly. Either
-     wire it in Phase 5+ or drop the event types.
-   - `STEP_FAILED`: the orchestrator's `step()` never emits it; an exception
-     propagates with no terminal step event. A crashed step is observable as
-     "started, never completed", but there is no explicit failure marker.
-   - `TASK_CREATED`: superseded by `task.queued`.
+1. ~~Four dead event types~~ — `TASK_CREATED` removed; `MODEL_SELECTED` /
+   `MODEL_FALLBACK` reserved (Phase 6 model selection); `STEP_FAILED` is now
+   emitted on normal exceptions. ✅ (#7)
+2. ~~`tool.*` carry no per-call id~~ — `ToolCall.call_id` threaded through
+   `tool.requested` / `tool.completed` / `policy.decision`; the projector pairs
+   by call_id. ✅ (#3)
+3. ~~Approval state not event-sourced~~ — `ApprovalState.reconstruct` added. ✅ (#4)
+4. ~~`step.failed` never emitted~~ — a normal exception now reaches a terminal
+   `step.failed`; process death still leaves no terminal event (that is how an
+   interruption is detected). ✅ (#5)
+5. ~~Double-recovery double-`requeued`~~ — `recover_abandoned` is now one atomic
+   conditional `UPDATE … RETURNING`. ✅ (#6)
 
-2. **`tool.requested` / `tool.completed` carry no per-call id.** Only the tool
-   name correlates them. The TraceProjector pairs them FIFO-per-name, which is
-   correct today but becomes ambiguous if one attempt invokes the same tool name
-   twice. → Add a `call_id` to `ToolCall` and thread it into both events.
-
-3. **Approval state is not event-sourced.** `ApprovalStore` is a mutable SQLite
-   table + events, but there is no `ApprovalState.reconstruct`. The queue has an
-   event-sourced `TaskState`; approvals do not. "Approval state reconstructible
-   from events alone" is therefore unverified.
-
-4. **A "waiting for approval" run has no run-level terminal event.** The run
-   stops emitting after `approval.required`; `RunState.reconstruct` yields
-   `RUNNING`. The pause is captured at the task level (`task.waiting`), which is
-   authoritative, but the run-level "paused" state is implicit.
 
 ---
 
@@ -108,17 +95,16 @@ the trail (verified in 3.6/3.7/4.5). **Sound.**
 run.started -> [step.started -> step.completed]* -> run.completed / run.failed
                                             (replan: run.replanned, more steps)
 ```
-Reconstructible. **Sound**, except a raising step never emits `step.failed`
-(finding 2.1).
+Reconstructible. **Sound** — a raising step now emits a terminal `step.failed`
+(resolved, #5).
 
 ### Approval (store)
 ```
 pending --approve--> approved --consume--> consumed
         \--deny--> denied
 ```
-Each transition emits `approval.*`. **No event-sourced projection** (finding 2.3):
-the transition graph is in the SQLite table, not reconstructible from events
-alone.
+Each transition emits `approval.*`. **Event-sourced** — `ApprovalState.reconstruct`
+reproduces the graph from events alone (resolved, #4).
 
 ---
 
@@ -136,14 +122,12 @@ by two threads at once.
 
 **What Nexus does NOT guarantee (the risk list):**
 
-1. **Approval consumption races with resume.** The orchestrator's
-   `find_approved` (SELECT) + `consume` (UPDATE) are not one transaction. Two
-   workers resuming the same task could both read "approved" and both execute the
-   tool — breaking single-use. → Make consume a conditional UPDATE
-   (`UPDATE … WHERE status='approved'`) and check the row count.
-2. **Double recovery.** `recover_abandoned` SELECTs expired tasks then UPDATEs
-   each. Two recoverers can both select the same task and both emit
-   `task.requeued`. Mostly idempotent, but the duplicate event pollutes the log.
+1. **Approval consumption races with resume** — ✅ resolved (5.1). `consume_approved`
+   is now one conditional `UPDATE … WHERE status='approved'` gated by row count,
+   so exactly one worker executes.
+2. **Double recovery** — ✅ resolved (5.6). `recover_abandoned` is now one atomic
+   conditional `UPDATE … RETURNING`; two recoverers cannot both requeue the same
+   task (only one row is returned).
 3. **Same-connection multi-thread writes.** With `check_same_thread=False`, two
    threads writing one connection corrupt it. Today the worker is single-threaded
    (tests are sequential processes), so this is latent, not exercised. → Phase 5:
@@ -196,22 +180,44 @@ backward-compatible; renaming/removing one breaks reconstruction of old logs.
 
 ## Findings summary (ranked for Phase 5)
 
-| # | Finding | Severity | Suggested fix |
+| # | Finding | Severity | Resolution |
 |---|---|---|---|
-| 1 | `find_approved` + `consume` not atomic | high | conditional UPDATE + rowcount ✅ |
-| 2 | same-connection multi-thread writes unsafe | high | serialize writes / per-thread conns |
-| 3 | `tool.*` events lack a per-call id | medium | add `call_id` to ToolCall |
-| 4 | approval state not event-sourced | medium | add `ApprovalState.reconstruct` |
-| 5 | `step.failed` never emitted | medium | emit on exception, or drop it |
-| 6 | double-recovery double-`requeued` event | low | atomic requeue (conditional UPDATE) |
-| 7 | 4 dead event types | low | wire router or delete types |
+| 1 | `find_approved` + `consume` not atomic | high | ✅ 5.1 — conditional UPDATE + rowcount |
+| 2 | same-connection multi-thread writes unsafe | high | open — 5.2 serialize writes / per-thread conns |
+| 3 | `tool.*` events lack a per-call id | medium | ✅ 5.3 — `call_id` on ToolCall |
+| 4 | approval state not event-sourced | medium | ✅ 5.4 — `ApprovalState.reconstruct` |
+| 5 | `step.failed` never emitted | medium | ✅ 5.5 — emit on exception |
+| 6 | double-recovery double-`requeued` event | low | ✅ 5.6 — atomic requeue (conditional UPDATE) |
+| 7 | 4 dead event types | low | ✅ 5.7 — remove/reserve dead types |
 
 *No finding is an architectural regression — every boundary held. These are the
 concurrency and observability risks that a demo never hits and production will.*
 
 ## Resolution log
 
-| Finding | Change | Test | Status |
-|---|---|---|---|
-| #1 atomic consume | `ApprovalStore.consume_approved` — one conditional `UPDATE … WHERE status='approved'`, rowcount gate; orchestrator executes only on a win | `tests/golden/test_phase5_concurrency.py` (two workers race, exactly one executes) | ✅ resolved (5.1) |
+- **#1 atomic consume (5.1)** — `ApprovalStore.consume_approved` is one conditional
+  `UPDATE … WHERE status='approved'` gated by row count; the orchestrator executes
+  only on a win. Test: `tests/golden/test_phase5_concurrency.py` (two workers race,
+  exactly one executes). ✅
+- **#3 per-call tool identity (5.3)** — `ToolCall.call_id` threaded through
+  `tool.requested` / `tool.completed` / `policy.decision`; the trace projector
+  pairs by call_id, so an interrupted call and a later completed call are never
+  conflated. Test: `tests/golden/test_phase5_hardening.py`. ✅
+- **#4 event-sourced approvals (5.4)** — `ApprovalState.reconstruct(approval_id,
+  events)` reproduces the approval lifecycle from events alone; the projection is
+  the source of truth, not a separate table read. Test:
+  `tests/golden/test_phase5_hardening.py`. ✅
+- **#5 terminal step semantics (5.5)** — a raising step now emits `step.failed`
+  and marks the step FAILED before re-raising; process death still leaves no
+  terminal event (that is how an interruption is detected). Test:
+  `tests/golden/test_phase5_hardening.py`. ✅
+- **#6 atomic recovery (5.6)** — `recover_abandoned` is one atomic conditional
+  `UPDATE … RETURNING`; two recoverers cannot both requeue the same task. Test:
+  `tests/golden/test_phase5_hardening.py`. ✅
+- **#7 taxonomy cleanup (5.7)** — `TASK_CREATED` removed; `MODEL_SELECTED` /
+  `MODEL_FALLBACK` reserved for Phase 6 model selection; `STEP_FAILED` is now
+  live. Test: `tests/golden/test_phase5_hardening.py`. ✅
+
+*#2 (same-connection multi-thread writes) remains open — it is the 5.2 SQLite
+concurrency policy, not part of this batch.*
 

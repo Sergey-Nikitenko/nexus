@@ -79,3 +79,29 @@ class TaskState:
             elif ev.event_type == "task.failed":
                 state.status = TaskStatus.FAILED
         return state
+
+
+@dataclass
+class ApprovalState:
+    """An approval's lifecycle, projected from approval.* events.
+
+    The approval store persists records AND emits events; this projection makes
+    the events the authoritative lifecycle, exactly like TaskState/RunState."""
+    approval_id: str
+    status: str = "pending"
+
+    @classmethod
+    def reconstruct(cls, approval_id: str, events: list[Event]) -> "ApprovalState":
+        state = cls(approval_id=approval_id)
+        for ev in events:
+            if ev.payload.get("approval_id") != approval_id:
+                continue
+            if ev.event_type == "approval.required":
+                state.status = "pending"
+            elif ev.event_type == "approval.granted":
+                state.status = "approved"
+            elif ev.event_type == "approval.denied":
+                state.status = "denied"
+            elif ev.event_type == "approval.consumed":
+                state.status = "consumed"
+        return state

@@ -44,7 +44,7 @@ class NexusRuntime:
             approvals=self.approvals, run_records=self.run_records,
             max_replans=max_replans)
         self.worker = Worker(worker_id=worker_id, queue=queue,
-                             orchestrator=self.orchestrator)
+                             orchestrator=self.orchestrator, run_records=self.run_records)
 
     # -- application surface (identical for fake and real components) -------
     def ask(self, title: str) -> str:

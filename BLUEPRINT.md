@@ -861,13 +861,34 @@ Proven by `tests/golden/test_phase6_records.py` (manifest+fingerprint persisted,
 fresh-process retrieval, identical-input match, changed-input diff, crash → no
 fabricated fingerprint).
 
+### Phase 6.4 — multi-worker arbitration
+
+Phase 5 proved task-level ownership; 6.4 answers the NEXT question: when workers
+run concurrently, which run is AUTHORITATIVE for a task, and is that decision
+durable? Deliberately NOT distributed consensus / leader election / a scheduler —
+SQLite is still the boundary; this is arbitration semantics, not a distributed
+system.
+
+- **Terminal run records are guarded by the claim generation (AD-032):** the
+  orchestrator records the manifest at start; the WORKER records the terminal
+  fingerprint only after its claim generation is confirmed current
+  (`queue.complete`/`fail` returned True). A stale worker's run keeps its manifest
+  but a NULL fingerprint — it can never publish a terminal result.
+- **Authoritative run is derived, not stored:** a task's authoritative run is the
+  one with a terminal fingerprint; the guard guarantees at most one per task.
+- **run_id and claim_generation stay separate identities** (execution attempt vs
+  task ownership); the guard records their relationship without merging them.
+- **Run records remain partitioned by run_id** — concurrent workers never
+  cross-contaminate tasks.
+
+Proven by `tests/golden/test_phase6_arbitration.py` (a stale worker mid-run is
+recovered; only the current generation publishes a terminal run record).
+
 ### Phase 6 — the rest (in order)
-1. **6.4 Multi-worker arbitration** — local / cloud / GPU workers behind the task
-   queue (plus the A2-1 owner-guard, already landed in 5.9).
-2. **6.5 Nexus as an MCP server** — `nexus.ask`, `nexus.run_task`,
+1. **6.5 Nexus as an MCP server** — `nexus.ask`, `nexus.run_task`,
    `nexus.search_knowledge`, `nexus.get_trace`, `nexus.approve`; another agent
    drives Nexus as a service.
-3. **6.6 Multi-agent** — supervisor → research/coding/review agents on the same
+2. **6.6 Multi-agent** — supervisor → research/coding/review agents on the same
    event/state/policy infrastructure.
 
 ## Golden tasks
@@ -924,6 +945,7 @@ Decisions whose wrong interpretation could cause regressions. Not a changelog.
 - **AD-029** — Reproducibility is manifest + events, never events alone: a run's defining inputs (knowledge snapshot, policy, model, tools, router, replan limits) are captured in a `RunManifest` BEFORE execution; replay compares a semantic fingerprint of the event log (not raw bytes), and derives a status (REPRODUCIBLE / REPRODUCIBLE_WITH_DIFFERENCES / NON_REPRODUCIBLE) from explicit conditions, never a guess.
 - **AD-030** — Persisted data carries a schema version, distinct from contract versions and component identities: the on-disk format version lives in SQLite's `PRAGMA user_version`; a build reads the current version, migrates the legacy (v0) format at open, and rejects newer versions deterministically — never silently interpreting old or future data.
 - **AD-031** — Run identity is `run_id`; the manifest (conditions) and fingerprint (semantic outcome) are derived evidence, persisted as first-class records — never the run's identity, never written into every event. The fingerprint is computed at a terminal state from the canonical projection, so a partial/crashed run has no fabricated fingerprint.
+- **AD-032** — A run's terminal fingerprint is authoritative only if its claim generation was current at completion: the orchestrator records the manifest at start; the worker records the terminal fingerprint only after its claim generation is confirmed current. A stale worker leaves a NULL fingerprint, so recovery can never manufacture a second authoritative run.
 
 ## Contract conformance: MUST MATCH vs MAY DIFFER
 
@@ -1024,6 +1046,7 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 | Run identity + deterministic replay (6.1): manifest before execution, semantic fingerprint, named input difference | `tests/golden/test_phase6_replay.py` |
 | Persisted-schema versioning (6.2): migrate legacy v0, reject future versions, schema version recorded separately | `tests/golden/test_phase6_schema.py` |
 | Durable run identity / fingerprints (6.3): manifest + terminal fingerprint persisted, retrievable by run_id, crash → no fabricated fingerprint | `tests/golden/test_phase6_records.py` |
+| Multi-worker arbitration (6.4): a stale worker cannot publish a terminal run record; exactly one authoritative run per task | `tests/golden/test_phase6_arbitration.py` |
 | Router never bypasses policy | `tests/golden/test_phase1_composition.py` |
 | State is recoverable (a projection of events) | `tests/golden/test_phase0_foundation.py` |
 | The boring event envelope (one uniform shape) | enforced by the `Event` dataclass itself |

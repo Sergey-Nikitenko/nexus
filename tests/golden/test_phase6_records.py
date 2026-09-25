@@ -10,8 +10,8 @@ first-class persisted records, retrievable by run_id alone. This proves:
 5. a partial/crashed run has a manifest but NO fabricated terminal fingerprint;
 6. the persisted record is Nexus vocabulary only.
 
-`/traces` semantics are unchanged — the event log remains the trace; this is run
-identity, not a second trace model (covered by the existing Phase 4 tests).
+Runs go through the WORKER (claim -> run -> ack), because the terminal fingerprint
+is written by the worker once its claim generation is confirmed current (AD-032).
 
 Run:  py tests/golden/test_phase6_records.py
 """
@@ -28,7 +28,9 @@ from control.policy import PolicyEngine, PolicyRules  # noqa: E402
 from control.tools import ToolRegistry, ToolSpec  # noqa: E402
 from execution.fake import FakeExecutor  # noqa: E402
 from execution.orchestrator import Orchestrator  # noqa: E402
+from execution.queue import TaskQueue  # noqa: E402
 from execution.run_records import RunRecordStore  # noqa: E402
+from execution.worker import Worker  # noqa: E402
 from knowledge.inmemory import ComposedRetriever  # noqa: E402
 from observability.replay import compare, fingerprint  # noqa: E402
 
@@ -54,7 +56,8 @@ def make_script():
     ]
 
 
-def build(knowledge_text, version, records, bus, executor=None):
+def build_system(knowledge_text, version, records, bus, executor=None):
+    queue = TaskQueue(os.path.join(tempfile.mkdtemp(), "queue.db"))
     retriever = ComposedRetriever()
     retriever.ingest("filesystem", "docs/middleware.md", version, knowledge_text)
     tools = ToolRegistry()
@@ -64,9 +67,19 @@ def build(knowledge_text, version, records, bus, executor=None):
         Evaluation(passed=False, reason="not fixed yet", replan_required=True),
         Evaluation(passed=True, reason="fixed"),
     ])
-    return Orchestrator(retriever=retriever, executor=executor or FakeExecutor(model_script=make_script()),
+    orch = Orchestrator(retriever=retriever,
+                        executor=executor or FakeExecutor(model_script=make_script()),
                         policy=policy, tools=tools, evaluator=evaluator, bus=bus,
                         run_records=records, max_replans=2)
+    worker = Worker(worker_id="w", queue=queue, orchestrator=orch, run_records=records)
+    return queue, worker
+
+
+def run_task(queue, worker, title):
+    task = Task(task_id=new_id("task"), title=title)
+    queue.enqueue(task)
+    outcome = worker.run_one()
+    return outcome, task.task_id
 
 
 class CrashExecutor:
@@ -90,8 +103,8 @@ def main():
 
     # --- 1. manifest at start + fingerprint at terminal ---------------------
     bus_a = EventBus()
-    out_a = build(KNOWLEDGE_V1, "v1", records, bus_a).run(
-        Task(task_id=new_id("task"), title="fix authentication bug"))
+    queue_a, worker_a = build_system(KNOWLEDGE_V1, "v1", records, bus_a)
+    out_a, _ = run_task(queue_a, worker_a, "fix authentication bug")
     run_id_a = out_a.run.run_id
     rec_a = records.get(run_id_a)
     check(rec_a is not None, "the RunManifest is persisted durably")
@@ -111,8 +124,8 @@ def main():
           "a fresh process retrieves the manifest + fingerprint using only the run_id")
 
     # --- 3. identical inputs -> same fingerprint, different run ids ---------
-    out_b = build(KNOWLEDGE_V1, "v1", records2, EventBus()).run(
-        Task(task_id=new_id("task"), title="fix authentication bug"))
+    queue_b, worker_b = build_system(KNOWLEDGE_V1, "v1", records2, EventBus())
+    out_b, _ = run_task(queue_b, worker_b, "fix authentication bug")
     run_id_b = out_b.run.run_id
     rec_b = records2.get(run_id_b)
     check(run_id_b != run_id_a, "the two runs have different runtime run ids")
@@ -120,8 +133,8 @@ def main():
           "identical deterministic inputs -> the SAME fingerprint (different ids/timestamps)")
 
     # --- 4. a changed input -> different fingerprint + attributable diff -----
-    out_c = build(KNOWLEDGE_V2, "v2", records2, EventBus()).run(
-        Task(task_id=new_id("task"), title="fix authentication bug"))
+    queue_c, worker_c = build_system(KNOWLEDGE_V2, "v2", records2, EventBus())
+    out_c, _ = run_task(queue_c, worker_c, "fix authentication bug")
     rec_c = records2.get(out_c.run.run_id)
     check(rec_c["fingerprint"] != rec_a2["fingerprint"],
           "a changed input -> a different fingerprint")
@@ -132,9 +145,12 @@ def main():
 
     # --- 5. a partial/crashed run gets no fabricated terminal fingerprint ----
     bus_d = EventBus()
-    orch_d = build(KNOWLEDGE_V1, "v1", records2, bus_d, executor=CrashExecutor())
+    queue_d, worker_d = build_system(KNOWLEDGE_V1, "v1", records2, bus_d,
+                                     executor=CrashExecutor())
+    task_d = Task(task_id=new_id("task"), title="x")
+    queue_d.enqueue(task_d)
     try:
-        orch_d.run(Task(task_id=new_id("task"), title="x"))
+        worker_d.run_one()
         raise AssertionError("expected the run to crash")
     except RuntimeError:
         pass

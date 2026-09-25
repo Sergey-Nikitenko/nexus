@@ -26,7 +26,8 @@ import sqlite3
 
 # The on-disk format version this build writes and understands.
 # v2: the tasks table gained `agent` + `parent_run_id` (multi-agent, 6.6).
-SCHEMA_VERSION = 2
+# v3: the tasks table gained `user` (user identity, 7.1).
+SCHEMA_VERSION = 3
 
 
 def read_version(conn: sqlite3.Connection) -> int:

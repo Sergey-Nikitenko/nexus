@@ -110,8 +110,8 @@ def main():
     check(rec_a is not None, "the RunManifest is persisted durably")
     check(rec_a["status"] == "completed" and rec_a["fingerprint"] is not None,
           "the fingerprint is persisted once the run reaches a terminal state")
-    check(all(isinstance(v, (str, int)) for v in rec_a["manifest"].values()),
-          "the persisted manifest is Nexus vocabulary only (strings/ints)")
+    check(all(isinstance(v, (str, int, dict)) for v in rec_a["manifest"].values()),
+          "the persisted manifest is Nexus vocabulary only (strings/ints/plain dicts)")
     check(rec_a["fingerprint"] == fingerprint(out_a.events),
           "the persisted fingerprint matches the canonical projection of the run's events")
 

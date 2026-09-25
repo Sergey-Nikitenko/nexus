@@ -8,7 +8,7 @@ the same Executor protocol — the caller never knows which produced the result.
 """
 from __future__ import annotations
 
-from core.contracts import ModelRequest, ModelResponse, ToolCall, ToolResult
+from core.contracts import ModelIdentity, ModelRequest, ModelResponse, ToolCall, ToolResult
 
 
 class FakeExecutor:
@@ -25,7 +25,7 @@ class FakeExecutor:
     golden test pin the execution semantics before any provider exists.
     """
 
-    model_identity = "fake/deterministic"  # Nexus vocabulary (RunManifest)
+    model_identity = ModelIdentity(model_id="fake-deterministic", family="fake", version="1")
 
     def __init__(self, model_script: list | None = None) -> None:
         self._model_script = list(model_script or [])

@@ -93,7 +93,7 @@ def main():
     supervisor.submit("compose a feature")
     sup_out = supervisor.run_one()
     sup_run_id = sup_out.run.run_id
-    check(sup_out.manifest.agent == "supervisor" and sup_out.manifest.parent_run_id == "",
+    check(sup_out.manifest.agent.agent_id == "supervisor" and sup_out.manifest.parent_run_id == "",
           "the supervisor's manifest records its agent role and no parent")
 
     # --- supervisor delegates to three child roles --------------------------
@@ -114,9 +114,10 @@ def main():
 
     # --- 1. agent identity + delegation correlation -------------------------
     for out, role in [(r_out, "research"), (c_out2, "coding"), (rv_out, "review")]:
-        check(out.manifest.agent == role and out.manifest.parent_run_id == sup_run_id,
+        check(out.manifest.agent.agent_id == role and out.manifest.parent_run_id == sup_run_id,
               f"{role}: manifest carries its agent role AND the delegating (parent) run")
-    check(rv_out.manifest.agent != sup_run_id, "agent identity is not conflated with a run_id")
+    check(rv_out.manifest.agent.agent_id != sup_run_id,
+          "agent identity is not conflated with a run_id")
 
     # --- 2. a failed child replans, observably, without corrupting its own run
     replans = [e for e in rv_out.events if e.event_type == EventType.RUN_REPLANNED]
@@ -130,7 +131,7 @@ def main():
 
     # --- 4. reconstruction: durable evidence says what was delegated ---------
     rec = research_runtime.run_records.get(r_out.run.run_id)
-    check(rec["manifest"]["agent"] == "research"
+    check(rec["manifest"]["agent"]["agent_id"] == "research"
           and rec["manifest"]["parent_run_id"] == sup_run_id,
           "reconstruction (run record) identifies the child's role AND the delegating run")
 

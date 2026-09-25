@@ -22,7 +22,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from core.contracts import (  # noqa: E402
-    Evaluation, ModelResponse, ReplayStatus, Risk, Task, ToolCall, new_id,
+    Evaluation, ModelIdentity, ModelResponse, ReplayStatus, Risk, Task, ToolCall,
+    new_id,
 )
 from core.events import EventType  # noqa: E402
 from control.evaluator import FakeEvaluator  # noqa: E402
@@ -89,10 +90,11 @@ def main():
           "the manifest is captured BEFORE the first capability decision")
 
     # the manifest is Nexus vocabulary (strings/ints), not a provider object
-    check(isinstance(manifest_a.knowledge, str) and isinstance(manifest_a.model, str)
+    check(isinstance(manifest_a.knowledge, str) and isinstance(manifest_a.model, ModelIdentity)
           and isinstance(manifest_a.max_replans, int),
-          "the manifest is Nexus vocabulary (strings + ints, no provider object)")
-    check(manifest_a.model == "fake/deterministic", "model identity is Nexus-level")
+          "the manifest is Nexus vocabulary (strings + identity contracts, no provider object)")
+    check(manifest_a.model.key == "model/fake-deterministic@1",
+          "model identity is a ModelIdentity contract")
     check("policy@1" in manifest_a.policy, "policy identity/version is captured")
 
     # --- 2. replay the SAME inputs -> MATCH (not byte-identical) ------------

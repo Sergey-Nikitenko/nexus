@@ -24,8 +24,9 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 
 from core.contracts import (
-    ApprovalRequest, Event, ModelRequest, PolicyVerdict, Run, RunManifest, Step,
-    StepStatus, Task, TaskStatus, Trace, new_id, utcnow,
+    AgentIdentity, ApprovalRequest, Event, ModelIdentity, ModelRequest,
+    PolicyVerdict, Run, RunManifest, Step, StepStatus, Task, TaskStatus, Trace,
+    UserIdentity, new_id, utcnow,
 )
 from core.events import EventBus, EventType
 from core.state import RunState
@@ -59,6 +60,16 @@ class Orchestrator:
         self.approvals = approvals      # ApprovalStore (optional; None = approvals not wired)
         self.run_records = run_records  # RunRecordStore (optional; None = not persisted)
         self.max_replans = max_replans
+
+    def _model_identity(self) -> ModelIdentity:
+        """Which logical model configuration this executor runs — a ModelIdentity
+        contract, never the provider config (AD-035)."""
+        mi = getattr(self.executor, "model_identity", None)
+        if isinstance(mi, ModelIdentity):
+            return mi
+        if isinstance(mi, str) and mi:
+            return ModelIdentity(model_id=mi)
+        return ModelIdentity()
 
     def run(self, task: Task) -> Outcome:
         run = Run(run_id=new_id("run"), task_id=task.task_id)
@@ -208,11 +219,12 @@ class Orchestrator:
             task_title=task.title,
             knowledge=_snapshot(self.retriever),
             policy=getattr(getattr(self.policy, "rules", None), "version", "policy@1"),
-            model=getattr(self.executor, "model_identity", "unknown"),
+            model=self._model_identity(),
             tools=_snapshot(self.tools),
             router="",
             max_replans=self.max_replans,
-            agent=task.agent,
+            user=UserIdentity(user_id=task.user),
+            agent=AgentIdentity(agent_id=task.agent, role=task.agent),
             parent_run_id=task.parent_run_id,
         )
         if self.run_records is not None:

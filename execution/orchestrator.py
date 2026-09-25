@@ -28,6 +28,7 @@ from core.contracts import (
     StepStatus, Task, TaskStatus, Trace, new_id, utcnow,
 )
 from core.events import EventBus, EventType
+from core.fingerprint import fingerprint
 from core.state import RunState
 from execution.instrumented import InstrumentedExecutor
 
@@ -49,7 +50,7 @@ class Orchestrator:
     """Composes injected capabilities behind one deterministic, bounded loop."""
 
     def __init__(self, *, retriever, executor, policy, tools, evaluator,
-                 bus=None, approvals=None, max_replans: int = 2) -> None:
+                 bus=None, approvals=None, run_records=None, max_replans: int = 2) -> None:
         self.retriever = retriever      # .search(query, filters, k) -> RetrievalResult
         self.executor = executor        # raw capability (FakeExecutor, subprocess, ...)
         self.policy = policy            # PolicyEngine (tool gating)
@@ -57,6 +58,7 @@ class Orchestrator:
         self.evaluator = evaluator      # .evaluate(...) -> Evaluation (judges, never executes)
         self.bus = bus or EventBus()
         self.approvals = approvals      # ApprovalStore (optional; None = approvals not wired)
+        self.run_records = run_records  # RunRecordStore (optional; None = not persisted)
         self.max_replans = max_replans
 
     def run(self, task: Task) -> Outcome:
@@ -212,6 +214,8 @@ class Orchestrator:
             router="",
             max_replans=self.max_replans,
         )
+        if self.run_records is not None:
+            self.run_records.record_manifest(run.run_id, manifest)
         emit(EventType.RUN_MANIFEST, "success", asdict(manifest))
         emit(EventType.RUN_STARTED, "success", {})
         step("plan", lambda: trace.nodes.append({
@@ -254,6 +258,11 @@ class Orchestrator:
             # terminal failure: replan not requested, or budget exhausted
             state.task_status = TaskStatus.FAILED
             emit(EventType.RUN_FAILED, "failed", {"reason": evaluation.reason})
+            if self.run_records is not None:
+                self.run_records.record_terminal(
+                    run.run_id,
+                    fingerprint([e for e in self.bus.history if e.run_id == run.run_id]),
+                    "failed")
             trace.nodes.append({"type": "answer", "answer": ""})
             return Outcome(answer="", run=run, trace=trace, live_state=state,
                            events=list(self.bus.history), manifest=manifest)
@@ -261,5 +270,10 @@ class Orchestrator:
         trace.nodes.append({"type": "answer", "answer": answer})
         state.task_status = TaskStatus.DONE
         emit(EventType.RUN_COMPLETED, "success", {"answer": answer})
+        if self.run_records is not None:
+            self.run_records.record_terminal(
+                run.run_id,
+                fingerprint([e for e in self.bus.history if e.run_id == run.run_id]),
+                "completed")
         return Outcome(answer=answer, run=run, trace=trace, live_state=state,
                        events=list(self.bus.history), manifest=manifest)

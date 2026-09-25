@@ -1,32 +1,21 @@
-"""Replay projection — the semantic fingerprint of a run (AD-029).
+"""Replay report — comparing two runs against their manifests (AD-029).
 
 A run is reproducible only when Nexus has persisted the INPUTS that define it
-(the `RunManifest`) alongside the OUTPUTS (the event log). This module computes
-the two halves of the reproducibility check:
+(the `RunManifest`) alongside the OUTPUTS (the event log). `compare` derives a
+`ReplayStatus` from explicit conditions:
 
-- `canonical_projection` — the event log reduced to SEMANTIC fields. Volatile ids
-  (event_id, run_id, task_id, timestamps, worker/claim/call/request/step/approval
-  ids) are dropped, because **reproducible != byte-identical**.
-- `fingerprint` — a deterministic digest of that projection.
-- `compare` — replays two runs against their manifests and DERIVES a
-  `ReplayStatus` from explicit conditions, never a guess.
+- REPRODUCIBLE iff inputs match AND semantic traces match;
+- REPRODUCIBLE_WITH_DIFFERENCES iff an input changed (or the traces diverged);
+- NON_REPRODUCIBLE iff a required input (manifest) is missing.
 
-Pure — consumes core only, so observability stays downstream of execution.
+The semantic trace comparison uses `core.fingerprint.canonical_projection` — the
+canonical, volatile-free projection established in 6.1. Pure — consumes core only,
+so observability stays downstream of execution.
 """
 from __future__ import annotations
 
-import hashlib
-import json
-
 from core.contracts import ReplayReport, ReplayStatus, RunManifest
-from core.events import EventType
-
-# Volatile fields: intentionally different between two runs of the SAME inputs.
-_VOLATILE = {
-    "event_id", "run_id", "task_id", "timestamp", "parent_event_id",
-    "worker_id", "claimed_at", "claim_generation", "call_id",
-    "request_id", "step_id", "approval_id",
-}
+from core.fingerprint import canonical_projection, fingerprint  # noqa: F401 (re-exported)
 
 # Manifest fields that are INPUTS (run_id/task_id are identities, not inputs).
 _MANIFEST_INPUT_FIELDS = (
@@ -34,47 +23,20 @@ _MANIFEST_INPUT_FIELDS = (
 )
 
 
-def _is_run_event(event_type: str) -> bool:
-    """The manifest is the input record (compared separately); task.* and
-    approval.* are queue/store lifecycle, not the run's semantic trace."""
-    return not (
-        event_type == EventType.RUN_MANIFEST
-        or event_type.startswith("task.")
-        or event_type.startswith("approval.")
-    )
+def _get(manifest, field):
+    # a manifest may be a RunManifest object (in memory) or the persisted dict
+    # (retrieved from RunRecordStore) — both answer the same "what inputs" question.
+    if isinstance(manifest, dict):
+        return manifest.get(field)
+    return getattr(manifest, field)
 
 
-def canonical_projection(events) -> list[dict]:
-    """Reduce a run's events to comparable semantic nodes, dropping volatile ids."""
-    nodes: list[dict] = []
-    for e in events:
-        if not _is_run_event(e.event_type):
-            continue
-        node = {"type": e.event_type}
-        for key, value in sorted(e.payload.items()):
-            if key not in _VOLATILE:
-                node[key] = value
-        nodes.append(node)
-    return nodes
-
-
-def fingerprint(events) -> str:
-    """A deterministic digest of the canonical projection."""
-    return hashlib.sha256(
-        json.dumps(canonical_projection(events), sort_keys=True, default=str).encode("utf-8")
-    ).hexdigest()
-
-
-def _inputs(manifest: RunManifest) -> dict:
-    return {f: getattr(manifest, f) for f in _MANIFEST_INPUT_FIELDS}
+def _inputs(manifest) -> dict:
+    return {f: _get(manifest, f) for f in _MANIFEST_INPUT_FIELDS}
 
 
 def compare(a_manifest, a_events, b_manifest, b_events) -> ReplayReport:
-    """Derive a ReplayStatus from explicit conditions.
-
-    REPRODUCIBLE iff inputs match AND semantic traces match;
-    REPRODUCIBLE_WITH_DIFFERENCES iff an input changed (or the traces diverged);
-    NON_REPRODUCIBLE iff a required input (manifest) is missing."""
+    """Derive a ReplayStatus from explicit conditions, never a guess."""
     if a_manifest is None or b_manifest is None:
         return ReplayReport(status=ReplayStatus.NON_REPRODUCIBLE)
 

@@ -182,11 +182,16 @@ class ModelResponse:
 
 @dataclass
 class ApprovalRequest:
+    """A request for human authorization of ONE specific proposed tool call.
+
+    Bound to its identity (task/run/tool/risk) so approving one action cannot
+    authorize another. Single-use: pending -> approved/denied -> consumed."""
     approval_id: str
+    task_id: str
+    run_id: str
     tool_name: str
-    resource: str
     risk: Risk
-    status: str = "pending"  # pending / approved / denied
+    status: str = "pending"  # pending / approved / denied / consumed / expired
 
 
 @dataclass

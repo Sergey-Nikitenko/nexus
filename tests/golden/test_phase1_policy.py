@@ -65,8 +65,9 @@ def main():
     verdict = policy.decide_tool(reg.get("github.create_pr"))
     approval = ApprovalRequest(
         approval_id=new_id("ap"),
+        task_id=task.task_id,
+        run_id=run.run_id,
         tool_name="github.create_pr",
-        resource="nexus",
         risk=Risk.WRITE,
     )
     ev = Event(

@@ -24,8 +24,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from core.contracts import (
-    Event, ModelRequest, PolicyVerdict, Run, Step, StepStatus, Task, TaskStatus, Trace,
-    new_id, utcnow,
+    ApprovalRequest, Event, ModelRequest, PolicyVerdict, Run, Step, StepStatus, Task,
+    TaskStatus, Trace, new_id, utcnow,
 )
 from core.events import EventBus, EventType
 from core.state import RunState
@@ -41,19 +41,21 @@ class Outcome:
     trace: Trace
     live_state: RunState
     events: list[Event] = field(default_factory=list)
+    waiting: bool = False
 
 
 class Orchestrator:
     """Composes injected capabilities behind one deterministic, bounded loop."""
 
     def __init__(self, *, retriever, executor, policy, tools, evaluator,
-                 bus=None, max_replans: int = 2) -> None:
+                 bus=None, approvals=None, max_replans: int = 2) -> None:
         self.retriever = retriever      # .search(query, filters, k) -> RetrievalResult
         self.executor = executor        # raw capability (FakeExecutor, subprocess, ...)
         self.policy = policy            # PolicyEngine (tool gating)
         self.tools = tools              # control ToolRegistry (name -> ToolSpec, for risk)
         self.evaluator = evaluator      # .evaluate(...) -> Evaluation (judges, never executes)
         self.bus = bus or EventBus()
+        self.approvals = approvals      # ApprovalStore (optional; None = approvals not wired)
         self.max_replans = max_replans
 
     def run(self, task: Task) -> Outcome:
@@ -89,8 +91,9 @@ class Orchestrator:
             messages.extend(extra_messages or [])
             return ModelRequest(messages=messages)
 
-        def run_tools(tool_calls) -> list:
+        def run_tools(tool_calls):
             results = []
+            waiting = False
             for call in tool_calls:
                 spec = self.tools.get(call.tool_name)
                 verdict = self.policy.decide_tool(spec)
@@ -107,13 +110,35 @@ class Orchestrator:
                                         "verdict": "allow", "success": result.success})
                     results.append(result)
                 elif verdict == PolicyVerdict.APPROVAL_REQUIRED:
-                    emit(EventType.APPROVAL_REQUIRED, "pending", {"tool": call.tool_name})
-                    trace.nodes.append({"type": "tool", "tool": call.tool_name,
-                                        "verdict": "approval_required"})
+                    if self.approvals is not None:
+                        # policy is re-checked here: an approved action is still
+                        # gated by the CURRENT policy, never magically authorized.
+                        granted = self.approvals.find_approved(
+                            task.task_id, call.tool_name, spec.risk)
+                        if granted is not None:
+                            self.approvals.consume(granted.approval_id)  # single-use
+                            result = instr.execute_tool(call)
+                            trace.nodes.append({"type": "tool", "tool": call.tool_name,
+                                                "verdict": "approved", "success": result.success})
+                            results.append(result)
+                        else:
+                            approval = ApprovalRequest(
+                                approval_id=new_id("appr"), task_id=task.task_id,
+                                run_id=run.run_id, tool_name=call.tool_name, risk=spec.risk)
+                            self.approvals.create(approval)  # emits approval.required
+                            trace.nodes.append({"type": "tool", "tool": call.tool_name,
+                                                "verdict": "approval_required",
+                                                "approval_id": approval.approval_id})
+                            waiting = True
+                            break  # pause: the task waits for human approval
+                    else:
+                        emit(EventType.APPROVAL_REQUIRED, "pending", {"tool": call.tool_name})
+                        trace.nodes.append({"type": "tool", "tool": call.tool_name,
+                                            "verdict": "approval_required"})
                 else:  # DENY
                     trace.nodes.append({"type": "tool", "tool": call.tool_name,
                                         "verdict": "deny"})
-            return results
+            return results, waiting
 
         def verify(tool_results, attempt):
             evaluation = self.evaluator.evaluate(tool_results=tool_results)
@@ -152,7 +177,12 @@ class Orchestrator:
             response = step("model", lambda: do_model(retrieved))
             tool_results = []
             if response.tool_calls:
-                tool_results = step("tool", lambda: run_tools(response.tool_calls))
+                tool_results, waiting = step("tool", lambda: run_tools(response.tool_calls))
+                if waiting:
+                    # the task pauses durably for human approval
+                    trace.nodes.append({"type": "waiting"})
+                    return Outcome(answer="", run=run, trace=trace, live_state=state,
+                                   events=list(self.bus.history), waiting=True)
                 response = step("model", lambda: do_model(
                     retrieved,
                     [{"role": "tool", "content": f"{len(tool_results)} tool result(s)"}],

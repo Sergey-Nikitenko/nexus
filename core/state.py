@@ -69,6 +69,8 @@ class TaskState:
             if ev.event_type == "task.claimed":
                 state.status = TaskStatus.CLAIMED
                 state.worker_id = ev.payload.get("worker_id")
+            elif ev.event_type == "task.waiting":
+                state.status = TaskStatus.AWAITING_APPROVAL
             elif ev.event_type == "task.requeued":
                 state.status = TaskStatus.QUEUED
                 state.worker_id = None

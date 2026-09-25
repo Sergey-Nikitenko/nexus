@@ -63,4 +63,25 @@ def create_app(runtime) -> FastAPI:
             raise HTTPException(status_code=404, detail="unknown trace")
         return {"run_id": run_id, "events": [_serialize_event(e) for e in events]}
 
+    @app.post("/approvals/{approval_id}/approve")
+    def approve(approval_id: str):
+        if runtime.approvals is None:
+            raise HTTPException(status_code=404, detail="approvals not wired")
+        approval = runtime.approvals.approve(approval_id)
+        if approval is None:
+            raise HTTPException(status_code=404, detail="unknown approval")
+        # the surface commands Nexus; it never executes the tool itself
+        runtime.queue.requeue(approval.task_id)
+        return {"approval_id": approval_id, "status": "approved"}
+
+    @app.post("/approvals/{approval_id}/deny")
+    def deny(approval_id: str):
+        if runtime.approvals is None:
+            raise HTTPException(status_code=404, detail="approvals not wired")
+        approval = runtime.approvals.deny(approval_id)
+        if approval is None:
+            raise HTTPException(status_code=404, detail="unknown approval")
+        runtime.queue.fail(approval.task_id, "approval denied")
+        return {"approval_id": approval_id, "status": "denied"}
+
     return app

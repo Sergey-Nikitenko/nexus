@@ -32,7 +32,10 @@ class Worker:
         except Exception as exc:
             self.queue.fail(task.task_id, f"worker error: {exc}")
             raise
-        if outcome.live_state.task_status == TaskStatus.DONE:
+        if outcome.waiting:
+            # durable pause: the task waits for human approval, not lost/failed
+            self.queue.wait(task.task_id)
+        elif outcome.live_state.task_status == TaskStatus.DONE:
             self.queue.complete(task.task_id, outcome.answer)
         else:
             self.queue.fail(task.task_id, "run failed")

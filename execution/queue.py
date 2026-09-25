@@ -109,6 +109,21 @@ class TaskQueue:
         self._conn.commit()
         self._emit(EventType.TASK_FAILED, self.get(task_id), {"error": error})
 
+    def wait(self, task_id: str) -> None:
+        """A task pauses for human approval (durable state transition)."""
+        self._conn.execute("UPDATE tasks SET status=? WHERE task_id=?",
+                           (TaskStatus.AWAITING_APPROVAL.value, task_id))
+        self._conn.commit()
+        self._emit(EventType.TASK_WAITING, self.get(task_id))
+
+    def requeue(self, task_id: str) -> None:
+        """An approved task becomes runnable again (durable state transition)."""
+        self._conn.execute(
+            "UPDATE tasks SET status=?, worker_id=NULL, claimed_at=NULL WHERE task_id=?",
+            (TaskStatus.QUEUED.value, task_id))
+        self._conn.commit()
+        self._emit(EventType.TASK_REQUEUED, self.get(task_id))
+
     def get(self, task_id: str) -> Task | None:
         row = self._conn.execute(
             "SELECT task_id, title, status FROM tasks WHERE task_id=?",

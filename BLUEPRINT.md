@@ -602,6 +602,35 @@ live events, receives only its selected run, gets a deterministic replay for a
 completed run, and cannot — by disconnecting or stalling — affect execution or
 the event log; WebSocket/framework types never cross apps/.*
 
+### Phase 4.5 — the approval lifecycle (durable authorization)
+
+    model proposes WRITE -> policy APPROVAL_REQUIRED -> approval.required
+    -> task WAITING_APPROVAL (durable) -> POST /approvals/{id}/approve
+    -> approval.granted -> task QUEUED -> worker re-runs -> policy AGAIN -> tool executes
+
+- **Approval is a durable task-state transition, not an HTTP callback (AD-025).**
+  A WRITE proposal pauses the run: the worker records `task.waiting`, the task
+  sits in `WAITING_APPROVAL`, and the worker/runtime/browser can all disappear
+  without losing it.
+- **Bound to a specific proposal:** `ApprovalRequest` carries approval_id,
+  task_id, run_id, tool_name, risk. Approving one action never authorizes
+  another (the golden test proves approving A does not authorize B).
+- **Single-use:** `pending -> approved/denied -> consumed`; a consumed approval
+  can never be replayed against a later call.
+- **Policy is re-checked on resume:** a granted approval is evidence a human
+  approved *that* proposal — it does not bypass the policy engine. If the
+  current policy DENIES the tool, execution is blocked (approval unconsumed).
+- **The surface commands, never executes:** `POST /approvals/{id}/approve`
+  marks the approval and requeues the task; it never touches
+  `Executor.execute_tool`. The audit trail
+  (`policy.decision → approval.required → approval.granted → approval.consumed →
+  tool.requested → tool.completed`) is fully reconstructible from events.
+
+**Phase 4.5 acceptance:** *an approval is durable, single-use, task-bound, and
+policy-governed; a worker can die, the runtime restart, and the browser
+disconnect while a task waits — and the resumed execution still runs the tool
+only if both a granted approval AND the current policy allow it.*
+
 ### Phase 5 — Hardening
 - **Secrets:** never enter prompts, traces, or model-visible logs.
 - **Tool execution:** timeouts, resource limits, filesystem boundaries,
@@ -666,6 +695,7 @@ Decisions whose wrong interpretation could cause regressions. Not a changelog.
 - **AD-022** — The HTTP layer is an edge adapter: FastAPI/Pydantic stop at apps/; Nexus contracts are serialized at the edge (never HTTP request models propagating inward), and task ID vs run ID stay distinct (`/tasks/{id}` lifecycle, `/traces/{run_id}` history).
 - **AD-023** — The trace is a read-side projection of the event stream: events stay the source of truth, the projector is deterministic and non-mutating, decisions (`policy.decision`) are observable, and incomplete/recovery transitions remain visible — observability consumes core only, never execution/providers/HTTP.
 - **AD-024** — The WebSocket subscribes to the event bus (never the orchestrator), replays durable history then tails live events filtered by run_id at the edge, uses a bounded per-client queue (disconnect-on-overflow), and is purely downstream — removing every client never changes execution or the event log.
+- **AD-025** — Approval is a durable task-state transition, not an HTTP callback: the approval is single-use and bound to a specific proposal (task/run/tool/risk), the policy is re-checked on resume (approval never bypasses it), and the surface commands Nexus (requeues) without ever executing the tool.
 
 ## Contract conformance: MUST MATCH vs MAY DIFFER
 
@@ -753,6 +783,7 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 | Trace projection is pure (no execution/provider/HTTP deps) | `tests/conformance/test_trace_projection_purity.py` |
 | Trace projector: deterministic, decisions/replans/incomplete/recovery visible | `tests/golden/test_phase4_trace.py` |
 | WebSocket: replay + live tail, run_id filter, downstream (no execution/event-log effect) | `tests/golden/test_phase4_ws.py` |
+| Approval lifecycle: durable waiting, single-use, task-bound, policy re-checked, downstream purity | `tests/golden/test_phase4_approval.py` |
 | Router never bypasses policy | `tests/golden/test_phase1_composition.py` |
 | State is recoverable (a projection of events) | `tests/golden/test_phase0_foundation.py` |
 | The boring event envelope (one uniform shape) | enforced by the `Event` dataclass itself |

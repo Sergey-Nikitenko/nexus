@@ -124,11 +124,17 @@ class Orchestrator:
                         granted = self.approvals.find_approved(
                             task.task_id, call.tool_name, spec.risk)
                         if granted is not None:
-                            self.approvals.consume(granted.approval_id)  # single-use
-                            result = instr.execute_tool(call)
-                            trace.nodes.append({"type": "tool", "tool": call.tool_name,
-                                                "verdict": "approved", "success": result.success})
-                            results.append(result)
+                            # ATOMIC single-use consume: the database decides the
+                            # winner; a loser (None) must not execute the tool.
+                            consumed = self.approvals.consume_approved(granted.approval_id)
+                            if consumed is not None:
+                                result = instr.execute_tool(call)
+                                trace.nodes.append({"type": "tool", "tool": call.tool_name,
+                                                    "verdict": "approved", "success": result.success})
+                                results.append(result)
+                            else:
+                                trace.nodes.append({"type": "tool", "tool": call.tool_name,
+                                                    "verdict": "consumed_elsewhere"})
                         else:
                             approval = ApprovalRequest(
                                 approval_id=new_id("appr"), task_id=task.task_id,

@@ -198,7 +198,7 @@ backward-compatible; renaming/removing one breaks reconstruction of old logs.
 
 | # | Finding | Severity | Suggested fix |
 |---|---|---|---|
-| 1 | `find_approved` + `consume` not atomic | high | conditional UPDATE + rowcount |
+| 1 | `find_approved` + `consume` not atomic | high | conditional UPDATE + rowcount ✅ |
 | 2 | same-connection multi-thread writes unsafe | high | serialize writes / per-thread conns |
 | 3 | `tool.*` events lack a per-call id | medium | add `call_id` to ToolCall |
 | 4 | approval state not event-sourced | medium | add `ApprovalState.reconstruct` |
@@ -208,3 +208,10 @@ backward-compatible; renaming/removing one breaks reconstruction of old logs.
 
 *No finding is an architectural regression — every boundary held. These are the
 concurrency and observability risks that a demo never hits and production will.*
+
+## Resolution log
+
+| Finding | Change | Test | Status |
+|---|---|---|---|
+| #1 atomic consume | `ApprovalStore.consume_approved` — one conditional `UPDATE … WHERE status='approved'`, rowcount gate; orchestrator executes only on a win | `tests/golden/test_phase5_concurrency.py` (two workers race, exactly one executes) | ✅ resolved (5.1) |
+

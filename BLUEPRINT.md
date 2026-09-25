@@ -681,6 +681,23 @@ passes — dependency graph, event taxonomy, state/event transition graphs,
 concurrency semantics, and public-contract compatibility.
 
 ### Phase 5 — Hardening
+
+**Headline guarantee:** *Nexus guarantees atomic authorization and ownership
+transitions under concurrent workers. A capability requiring exclusive
+authorization can execute at most once for a given approved proposal.*
+
+### Phase 5.1 — atomic approval consumption
+
+`find_approved()` + `consume()` had a TOCTOU race (two workers could both read
+APPROVED, both consume, both execute). Replaced with one atomic transition:
+`consume_approved(approval_id)` is a single conditional
+`UPDATE … SET status='consumed' WHERE approval_id=? AND status='approved'`, and
+the caller checks the affected-row count. Exactly one worker gets 1 (executes);
+every other gets 0 and must not execute. Proven by
+`tests/golden/test_phase5_concurrency.py`, which races two workers (separate
+connections) and asserts exactly one execution.
+
+### Phase 5 (continued) — Hardening
 - **Secrets:** never enter prompts, traces, or model-visible logs.
 - **Tool execution:** timeouts, resource limits, filesystem boundaries,
   network restrictions, permission checks (a sandbox for shell/code execution).
@@ -836,6 +853,7 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 | Approval lifecycle: durable waiting, single-use, task-bound, policy re-checked, downstream purity | `tests/golden/test_phase4_approval.py` |
 | Dashboard: disposable projection consumer — decisions/attempts/recovery/interruption, no authority | `tests/golden/test_phase4_dashboard.py` |
 | CLI: thin surface adapter — same async ask + same projected views as REST/WS/dashboard | `tests/golden/test_phase4_cli.py` |
+| Atomic approval consumption: two workers race, exactly one executes (single-use) | `tests/golden/test_phase5_concurrency.py` |
 | Router never bypasses policy | `tests/golden/test_phase1_composition.py` |
 | State is recoverable (a projection of events) | `tests/golden/test_phase0_foundation.py` |
 | The boring event envelope (one uniform shape) | enforced by the `Event` dataclass itself |

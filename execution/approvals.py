@@ -63,8 +63,23 @@ class ApprovalStore:
     def deny(self, approval_id: str) -> ApprovalRequest:
         return self._transition(approval_id, "denied", EventType.APPROVAL_DENIED)
 
-    def consume(self, approval_id: str) -> ApprovalRequest:
-        return self._transition(approval_id, "consumed", EventType.APPROVAL_CONSUMED)
+    def consume_approved(self, approval_id: str) -> ApprovalRequest | None:
+        """Atomically consume an APPROVED approval (single-use).
+
+        The transition is ONE conditional UPDATE, so the database — not Python
+        timing — decides the winner: exactly one caller transitions APPROVED ->
+        CONSUMED (rowcount 1); every other caller gets 0 and MUST NOT execute."""
+        cur = self._conn.execute(
+            "UPDATE approvals SET status='consumed' WHERE approval_id=? AND status='approved'",
+            (approval_id,))
+        self._conn.commit()
+        if cur.rowcount != 1:
+            return None  # already consumed (or never approved) -> lost the race
+        approval = self.get(approval_id)
+        self._emit(EventType.APPROVAL_CONSUMED, approval, {
+            "approval_id": approval_id, "tool": approval.tool_name,
+        })
+        return approval
 
     def find_approved(self, task_id: str, tool_name: str, risk: Risk) -> ApprovalRequest | None:
         """The single approved (unconsumed) approval for this exact proposal."""

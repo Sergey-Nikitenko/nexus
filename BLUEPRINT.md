@@ -884,11 +884,34 @@ system.
 Proven by `tests/golden/test_phase6_arbitration.py` (a stale worker mid-run is
 recovered; only the current generation publishes a terminal run record).
 
+### Phase 6.5 — Nexus as an MCP server (the ingress twin of 3.8)
+
+3.8 proved Nexus can USE an MCP server as a tool provider; 6.5 proves the
+inverse: Nexus can BE an MCP server for an external MCP client, without the
+orchestrator (or any core/control/execution/knowledge component) seeing an MCP
+object. `apps/mcp_server.py` owns MCP's vocabulary (JSON-RPC 2.0 over stdio,
+stdlib only — no `mcp` SDK, enforced by the provider-leakage gate).
+
+- **Discovery:** `tools/list` exposes Nexus capabilities as `ToolDefinition`
+  contracts (`nexus.ask`, `nexus.task`); only Nexus contracts cross.
+- **Invocation:** `tools/call` becomes a Nexus-level request; the result is
+  re-wrapped in MCP's envelope only at the adapter. The durable task lifecycle is
+  not bypassed — `nexus.ask` returns a queued task_id.
+- **Policy stays authoritative:** the adapter only calls `runtime.ask`/`task`
+  (the same surface as HTTP/CLI), so it cannot turn a denied capability into an
+  allowed one, and approval-required operations keep their lifecycle.
+- **Correlation:** the JSON-RPC request id is transport-only; Nexus's task_id /
+  run_id / call_id are independent and returned in the result.
+- **Failure taxonomy:** malformed request → protocol error; a valid Nexus
+  operation that fails → an `isError` RESULT; transport failure → the loop exits.
+  No second taxonomy.
+- **Observability:** the task flows through the same durable events and trace
+  projection as an internal invocation — no MCP-specific model.
+
+Proven by `tests/conformance/test_nexus_mcp_boundary.py`.
+
 ### Phase 6 — the rest (in order)
-1. **6.5 Nexus as an MCP server** — `nexus.ask`, `nexus.run_task`,
-   `nexus.search_knowledge`, `nexus.get_trace`, `nexus.approve`; another agent
-   drives Nexus as a service.
-2. **6.6 Multi-agent** — supervisor → research/coding/review agents on the same
+1. **6.6 Multi-agent** — supervisor → research/coding/review agents on the same
    event/state/policy infrastructure.
 
 ## Golden tasks
@@ -946,6 +969,7 @@ Decisions whose wrong interpretation could cause regressions. Not a changelog.
 - **AD-030** — Persisted data carries a schema version, distinct from contract versions and component identities: the on-disk format version lives in SQLite's `PRAGMA user_version`; a build reads the current version, migrates the legacy (v0) format at open, and rejects newer versions deterministically — never silently interpreting old or future data.
 - **AD-031** — Run identity is `run_id`; the manifest (conditions) and fingerprint (semantic outcome) are derived evidence, persisted as first-class records — never the run's identity, never written into every event. The fingerprint is computed at a terminal state from the canonical projection, so a partial/crashed run has no fabricated fingerprint.
 - **AD-032** — A run's terminal fingerprint is authoritative only if its claim generation was current at completion: the orchestrator records the manifest at start; the worker records the terminal fingerprint only after its claim generation is confirmed current. A stale worker leaves a NULL fingerprint, so recovery can never manufacture a second authoritative run.
+- **AD-033** — An ingress protocol (MCP, HTTP, CLI) is a disposable surface over `NexusRuntime`: the adapter owns the protocol's vocabulary and only Nexus contracts cross. Nexus can be an MCP server without the orchestrator (or core/control/execution/knowledge) importing MCP vocabulary — the provider-neutrality of 3.8's MCP executor, inverted.
 
 ## Contract conformance: MUST MATCH vs MAY DIFFER
 
@@ -1047,6 +1071,7 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 | Persisted-schema versioning (6.2): migrate legacy v0, reject future versions, schema version recorded separately | `tests/golden/test_phase6_schema.py` |
 | Durable run identity / fingerprints (6.3): manifest + terminal fingerprint persisted, retrievable by run_id, crash → no fabricated fingerprint | `tests/golden/test_phase6_records.py` |
 | Multi-worker arbitration (6.4): a stale worker cannot publish a terminal run record; exactly one authoritative run per task | `tests/golden/test_phase6_arbitration.py` |
+| Nexus as an MCP server (6.5): adapter owns MCP vocabulary, durable lifecycle preserved, failure taxonomy intact | `tests/conformance/test_nexus_mcp_boundary.py` |
 | Router never bypasses policy | `tests/golden/test_phase1_composition.py` |
 | State is recoverable (a projection of events) | `tests/golden/test_phase0_foundation.py` |
 | The boring event envelope (one uniform shape) | enforced by the `Event` dataclass itself |

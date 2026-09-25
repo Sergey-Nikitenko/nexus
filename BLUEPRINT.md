@@ -433,6 +433,33 @@ the unchanged Orchestrator, ownership/completion/failure are durable and
 observable, state reconstructs from the log, the worker has no provider
 knowledge, and duplicate-delivery semantics are explicit.*
 
+### Phase 3.7 — crash recovery (failure injection, not feature expansion)
+
+3.6 built the machinery; 3.7 proves it under actual process death.
+
+    enqueue -> w1 claims -> orchestrator runs -> KILL PROCESS
+    -> fresh process/connection -> reconstruct -> recover abandoned CLAIMED task
+    -> w2 claims -> orchestrator re-runs -> task.completed
+
+- **Recovery is a lease rule on durable evidence (AD-019).** A claim records
+  `claimed_at`; `CLAIMED + lease expired → recoverable`. `RecoveryManager`
+  requeues such tasks based purely on status + `claimed_at` — never on knowing
+  which worker died. The clock is injectable and deliberately simple.
+- **Recovery belongs to queue infrastructure, never the orchestrator (AD-019).**
+  The orchestrator has no idea whether it was started normally or because a
+  previous worker died — it just runs the task. Recovery is an execution
+  concern, not an agent-intelligence concern.
+- **At-least-once is demonstrated, not asserted.** Case B kills the worker
+  *after* the tool's side effect, before the completion event: the tool
+  executes again on re-run (side effect count 2), exactly as AD-018 documents.
+- **Reconstruction survives death:** `TaskState.reconstruct(all_events)` and
+  `RunState.reconstruct(run, w2_events)` reproduce the recovered state from the
+  durable log, closing the loop Phase 0 → 3.5 → 3.6 → 3.7.
+
+**Phase 3.7 acceptance:** *a task, under real worker death, is never silently
+lost — durable evidence identifies it, the queue recovers it, a fresh worker
+finishes it, and the event log reconstructs the recovered state.*
+
 ### Phase 4 — Surface
 API (REST + WebSocket), dashboard (run view, trace tree, approval queue, *Why*
 panel), CLI. The dashboard is driven directly off the decision objects.
@@ -495,6 +522,7 @@ Decisions whose wrong interpretation could cause regressions. Not a changelog.
 - **AD-016** — The evaluator observes and judges; it never executes a capability or mutates execution state (returns `Evaluation`; the orchestrator coordinates).
 - **AD-017** — Task ownership is a durable event (`task.claimed` with `worker_id`), never an in-memory flag; the event/state log is the source of truth for the task lifecycle (`queued → claimed → completed/failed`).
 - **AD-018** — Task delivery is at-least-once, never exactly-once; duplicate tool execution after recovery is explicit and observable, and idempotency/recovery is applied where required (as with stable chunk ids).
+- **AD-019** — Recovery is a lease rule on durable evidence (`CLAIMED` + expired `claimed_at` → recoverable), and it lives in queue infrastructure — never the orchestrator, which has no idea whether it is running normally or after a previous worker died.
 
 ## Contract conformance: MUST MATCH vs MAY DIFFER
 
@@ -572,6 +600,7 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 | Policy stays authoritative across replans (DENY persists on every attempt) | `tests/golden/test_phase3_replan_policy.py` |
 | The worker has no provider/retrieval knowledge (only composes queue + orchestrator) | `tests/conformance/test_worker_purity.py` |
 | Durable task execution: ownership/completion durable + observable, state reconstructible from the log | `tests/golden/test_phase3_worker.py` |
+| Crash recovery under real process death (two failure points, lease-based requeue, reconstruct) | `tests/golden/test_phase3_recovery.py` |
 | Router never bypasses policy | `tests/golden/test_phase1_composition.py` |
 | State is recoverable (a projection of events) | `tests/golden/test_phase0_foundation.py` |
 | The boring event envelope (one uniform shape) | enforced by the `Event` dataclass itself |

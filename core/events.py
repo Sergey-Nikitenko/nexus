@@ -16,6 +16,7 @@ class EventType(str):
     TASK_CREATED = "task.created"
     TASK_QUEUED = "task.queued"
     TASK_CLAIMED = "task.claimed"
+    TASK_REQUEUED = "task.requeued"
     TASK_COMPLETED = "task.completed"
     TASK_FAILED = "task.failed"
     RUN_STARTED = "run.started"

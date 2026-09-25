@@ -578,6 +578,30 @@ projector reproduces the same trace deterministically, preserves causality and
 decisions, shows replans as attempts, leaves incomplete operations incomplete,
 makes recovery visible, and has no execution/provider/HTTP dependency.*
 
+### Phase 4.4 — WebSocket (subscribe to events, never the orchestrator)
+
+    DurableEventBus -> event subscriber -> TraceProjector -> WebSocket adapter -> browser
+
+- **The WebSocket subscribes to the event bus (AD-024).** It never polls the
+  orchestrator and never receives callbacks from it; the orchestrator has no
+  idea a browser exists.
+- **Replay + live tail:** on connect, `/ws/runs/{run_id}` replays the run's
+  durable history (projected), then tails live events. A completed run replays
+  and closes cleanly; a refresh never loses the beginning of the run.
+- **Filter at the edge:** the bus stays generic; the subscriber drops events
+  whose `run_id` doesn't match. The wire format carries only Nexus-level
+  keys — no MCP/OpenAI/Chroma vocabulary.
+- **Backpressure is explicit:** a bounded per-client queue; a client that can't
+  keep up is disconnected (disconnect-on-overflow) rather than stalling the bus.
+- **Observability is genuinely downstream:** removing every WebSocket client
+  changes neither the execution result nor the durable event log (asserted in
+  the golden test).
+
+**Phase 4.4 acceptance:** *a client connects, receives the durable replay then
+live events, receives only its selected run, gets a deterministic replay for a
+completed run, and cannot — by disconnecting or stalling — affect execution or
+the event log; WebSocket/framework types never cross apps/.*
+
 ### Phase 5 — Hardening
 - **Secrets:** never enter prompts, traces, or model-visible logs.
 - **Tool execution:** timeouts, resource limits, filesystem boundaries,
@@ -641,6 +665,7 @@ Decisions whose wrong interpretation could cause regressions. Not a changelog.
 - **AD-021** — Applications compose Nexus; Nexus components do not discover each other through global state. The surface observes and commands through contracts/events, and execution never depends on the surface.
 - **AD-022** — The HTTP layer is an edge adapter: FastAPI/Pydantic stop at apps/; Nexus contracts are serialized at the edge (never HTTP request models propagating inward), and task ID vs run ID stay distinct (`/tasks/{id}` lifecycle, `/traces/{run_id}` history).
 - **AD-023** — The trace is a read-side projection of the event stream: events stay the source of truth, the projector is deterministic and non-mutating, decisions (`policy.decision`) are observable, and incomplete/recovery transitions remain visible — observability consumes core only, never execution/providers/HTTP.
+- **AD-024** — The WebSocket subscribes to the event bus (never the orchestrator), replays durable history then tails live events filtered by run_id at the edge, uses a bounded per-client queue (disconnect-on-overflow), and is purely downstream — removing every client never changes execution or the event log.
 
 ## Contract conformance: MUST MATCH vs MAY DIFFER
 
@@ -727,6 +752,7 @@ The suite answers two questions: *"does Nexus work?"* (golden tasks) and
 | Thin HTTP adapter: async /ask, durable task status, event history, restart-safe, explicit 4xx | `tests/golden/test_phase4_api.py` |
 | Trace projection is pure (no execution/provider/HTTP deps) | `tests/conformance/test_trace_projection_purity.py` |
 | Trace projector: deterministic, decisions/replans/incomplete/recovery visible | `tests/golden/test_phase4_trace.py` |
+| WebSocket: replay + live tail, run_id filter, downstream (no execution/event-log effect) | `tests/golden/test_phase4_ws.py` |
 | Router never bypasses policy | `tests/golden/test_phase1_composition.py` |
 | State is recoverable (a projection of events) | `tests/golden/test_phase0_foundation.py` |
 | The boring event envelope (one uniform shape) | enforced by the `Event` dataclass itself |

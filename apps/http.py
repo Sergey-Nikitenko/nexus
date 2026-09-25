@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException, Response, status
 from pydantic import BaseModel
 
 from core.state import TaskState
+from apps.ws import register_websocket
 
 
 class AskRequest(BaseModel):
@@ -34,6 +35,7 @@ def _serialize_event(e) -> dict:
 
 def create_app(runtime) -> FastAPI:
     app = FastAPI(title="Nexus")
+    register_websocket(app, runtime)
 
     @app.post("/ask", status_code=status.HTTP_202_ACCEPTED)
     def ask(req: AskRequest, response: Response):

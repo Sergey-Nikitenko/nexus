@@ -37,6 +37,8 @@ class TraceProjector:
             "event": e.event_type,
             "event_id": e.event_id,
             "parent_event_id": e.parent_event_id,
+            "run_id": e.run_id,
+            "task_id": e.task_id,
         }
 
     def _project(self, e, completed_by_tool) -> dict | None:

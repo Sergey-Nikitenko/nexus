@@ -57,6 +57,14 @@ class EventBus:
     def subscribe_all(self, handler: Handler) -> None:
         self._all.append(handler)
 
+    def unsubscribe(self, event_type: str, handler: Handler) -> None:
+        if handler in self._handlers.get(event_type, []):
+            self._handlers[event_type].remove(handler)
+
+    def unsubscribe_all(self, handler: Handler) -> None:
+        if handler in self._all:
+            self._all.remove(handler)
+
     def publish(self, event: Event) -> None:
         self.history.append(event)
         for h in self._handlers.get(event.event_type, []):
